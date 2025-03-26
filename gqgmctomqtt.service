@@ -1,0 +1,16 @@
+[Unit]
+Description=GC GMC to MQTT server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/opt/radiation/gqgmctomqtt.sh
+ExecReload=kill -HUP $MAINPID
+KillMode=process
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
+
