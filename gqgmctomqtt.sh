@@ -24,6 +24,8 @@ MQTT_TOPIC="sensors/radiation/cpm"
 DEVICE_MODEL=""
 DEVICE_SERIAL=""
 
+running_okay=true
+
 ################################################################################
 
 dependency_check() {
@@ -93,7 +95,7 @@ device_serial_config() {
     return 0
 }
 device_serial_wait() {
-    while true; do
+    while $running_okay; do
         if device_serial_check; then
             echo "Device connected $SERIAL_PORT"
             if device_serial_config; then
@@ -101,8 +103,9 @@ device_serial_wait() {
             fi
         fi
         echo "Device waiting $SERIAL_PORT ..."
-        sleep 10
+        sleep 5
     done
+    return 1
 }
 device_serial_send() {
     local cmd="$1"
@@ -161,11 +164,9 @@ device_cpm_display() {
 
 ################################################################################
 
-read_and_send_okay=true
-
 read_and_send_loop() {
     echo "Reading CPM data every $READ_PERIOD seconds and publishing to MQTT '$MQTT_TOPIC' ..."
-    while $read_and_send_okay; do
+    while $running_okay; do
         if ! device_serial_check; then
             echo "Device disconnected, waiting for reconnection ..."
             device_serial_wait
@@ -188,8 +189,6 @@ read_and_send_loop() {
     done
 }
 read_and_send_stop() {
-    echo "Received termination signal. Stopping ..."
-    read_and_send_okay=false
     if [[ -n "$SLEEP_PID" ]]; then
         kill $SLEEP_PID 2>/dev/null
     fi
@@ -206,13 +205,17 @@ fi
 echo $$ >&9
 
 cleanup() {
-    read_and_send_stop
     mqtt_stop
     flock -u 9
     rm -f "$LOCK_FILE"
 }
+terminate() {
+    echo "Received termination signal. Stopping ..."
+    running_okay=false
+    read_and_send_stop
+}
 
-trap read_and_send_stop SIGINT SIGTERM
+trap terminate SIGINT SIGTERM
 trap cleanup EXIT
 
 ################################################################################
@@ -220,10 +223,11 @@ trap cleanup EXIT
 main() {
     echo "===== GQ Geiger Counter MQTT Publisher ====="
     dependency_check
-    mqtt_start
-    device_serial_wait
-    device_info_display
-    read_and_send_loop
+    if device_serial_wait; then
+        mqtt_start
+        device_info_display
+        read_and_send_loop
+    fi
 }
 
 main
