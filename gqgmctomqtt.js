@@ -39,7 +39,7 @@ function configLoad(configPath) {
         return {};
     }
 }
-const configPath = 'secrets.txt';
+const configPath = '/opt/radiation/secrets.txt';
 const conf = configLoad(configPath);
 
 console.log(
@@ -120,13 +120,14 @@ async function deviceSerialEnd() {
     if (port && port.isOpen) port.close();
 }
 async function deviceSerialWait() {
+    let counter = 0;
     while (runningOkay) {
         if (await deviceSerialCheck()) {
             if (!(await deviceSerialConfig())) return false;
             console.log(`sensor-radiation: device: connected`);
             return true;
         }
-        console.log(`sensor-radiation: device: waiting for connection`);
+        if (counter++ % 6 == 0) console.log(`sensor-radiation: device: waiting for connection`);
         await new Promise((resolve) => setTimeout(resolve, 5000));
     }
     return false;

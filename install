@@ -1,0 +1,3 @@
+cp gqgmctomqtt.service /etc/systemd/system/
+systemctl enable gqgmctomqtt
+systemctl start gqgmctomqtt
