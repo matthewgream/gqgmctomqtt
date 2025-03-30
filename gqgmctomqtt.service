@@ -5,7 +5,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/opt/radiation/gqgmctomqtt.sh
+ExecStart=/opt/radiation/gqgmctomqtt.js
 ExecReload=kill -HUP $MAINPID
 KillMode=process
 Restart=on-failure
