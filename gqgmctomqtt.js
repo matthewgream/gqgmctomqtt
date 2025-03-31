@@ -39,7 +39,7 @@ function configLoad(configPath) {
         return {};
     }
 }
-const configPath = '/opt/radiation/secrets.txt';
+const configPath = '/opt/sensors/radiation/secrets.txt';
 const conf = configLoad(configPath);
 
 console.log(
