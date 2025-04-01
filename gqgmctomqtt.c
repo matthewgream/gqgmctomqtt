@@ -26,20 +26,21 @@
 #include <time.h>
 #include <unistd.h>
 
-#define CONFIG_FILE_DEFAULT "secrets.txt"
-#define MAX_CONFIG_LINE 256
-#define MAX_CONFIG_VALUE 128
 #define READ_PERIOD 5
-
-char mqtt_broker[MAX_CONFIG_VALUE] = "";
-char mqtt_topic[MAX_CONFIG_VALUE] = "";
-char serial_port[MAX_CONFIG_VALUE] = "";
-int serial_baud = 115200;
 
 bool running = true;
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
+
+#define CONFIG_FILE_DEFAULT "secrets.txt"
+#define MAX_CONFIG_LINE 256
+#define MAX_CONFIG_VALUE 128
+
+char config_mqtt_broker[MAX_CONFIG_VALUE] = "";
+char config_mqtt_topic[MAX_CONFIG_VALUE] = "";
+char config_serial_port[MAX_CONFIG_VALUE] = "";
+int config_serial_baud = 115200;
 
 bool config_load(int argc, const char **argv) {
     const char *path = CONFIG_FILE_DEFAULT;
@@ -71,20 +72,20 @@ bool config_load(int argc, const char **argv) {
             while (end > value && isspace(*end))
                 *end-- = '\0';
             if (strcmp(key, "MQTT") == 0) {
-                strncpy(mqtt_broker, value, sizeof(mqtt_broker) - 1);
+                strncpy(config_mqtt_broker, value, sizeof(config_mqtt_broker) - 1);
             } else if (strcmp(key, "MQTT_TOPIC") == 0) {
-                strncpy(mqtt_topic, value, sizeof(mqtt_topic) - 1);
+                strncpy(config_mqtt_topic, value, sizeof(config_mqtt_topic) - 1);
             } else if (strcmp(key, "PORT") == 0) {
-                strncpy(serial_port, value, sizeof(serial_port) - 1);
+                strncpy(config_serial_port, value, sizeof(config_serial_port) - 1);
             } else if (strcmp(key, "RATE") == 0) {
-                serial_baud = atoi(value);
+                config_serial_baud = atoi(value);
             }
         }
     }
     fclose(file);
-    printf("config: '%s': mqtt=%s, mqtt_topic=%s, port=%s, rate=%d\n", path, mqtt_broker, mqtt_topic, serial_port,
-           serial_baud);
-    return (mqtt_broker[0] != '\0' && mqtt_topic[0] != '\0' && serial_port[0] != '\0');
+    printf("config: '%s': mqtt=%s, config_mqtt_topic=%s, port=%s, rate=%d\n", path, config_mqtt_broker,
+           config_mqtt_topic, config_serial_port, config_serial_baud);
+    return (config_mqtt_broker[0] != '\0' && config_mqtt_topic[0] != '\0' && config_serial_port[0] != '\0');
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -92,13 +93,13 @@ bool config_load(int argc, const char **argv) {
 
 int serial_fd = -1;
 
-bool serial_check(void) { return (access(serial_port, F_OK) == 0); }
+bool serial_check(void) { return (access(config_serial_port, F_OK) == 0); }
 
 bool serial_configure(void) {
-    printf("device: configure %s at %d baud\n", serial_port, serial_baud);
+    printf("device: configure %s at %d baud\n", config_serial_port, config_serial_baud);
     if (serial_fd >= 0)
         close(serial_fd);
-    serial_fd = open(serial_port, O_RDWR | O_NOCTTY);
+    serial_fd = open(config_serial_port, O_RDWR | O_NOCTTY);
     if (serial_fd < 0) {
         fprintf(stderr, "device: error accessing serial port: %s\n", strerror(errno));
         return false;
@@ -112,7 +113,7 @@ bool serial_configure(void) {
         return false;
     }
     speed_t baud;
-    switch (serial_baud) {
+    switch (config_serial_baud) {
     case 9600:
         baud = B9600;
         break;
@@ -223,6 +224,14 @@ void serial_end(void) { serial_disconnect(); }
 
 struct mosquitto *mosq = NULL;
 
+void mqtt_send(const char *topic, const char *message) {
+    if (!mosq)
+        return;
+    int result = mosquitto_publish(mosq, NULL, topic, strlen(message), message, 0, false);
+    if (result != MOSQ_ERR_SUCCESS)
+        fprintf(stderr, "mqtt: publish error: %s\n", mosquitto_strerror(result));
+}
+
 void mqtt_connect_callback(struct mosquitto *mosq, void *obj, int result) {
     if (result != 0) {
         fprintf(stderr, "mqtt: connect failed: %s\n", mosquitto_connack_string(result));
@@ -235,24 +244,25 @@ bool mqtt_begin(void) {
     char host[MAX_CONFIG_VALUE] = "";
     int port = 1883;
     bool use_ssl = false;
-    if (strncmp(mqtt_broker, "mqtt://", 7) == 0) {
-        strncpy(host, mqtt_broker + 7, sizeof(host) - 1);
-    } else if (strncmp(mqtt_broker, "mqtts://", 8) == 0) {
-        strncpy(host, mqtt_broker + 8, sizeof(host) - 1);
+    if (strncmp(config_mqtt_broker, "mqtt://", 7) == 0) {
+        strncpy(host, config_mqtt_broker + 7, sizeof(host) - 1);
+    } else if (strncmp(config_mqtt_broker, "mqtts://", 8) == 0) {
+        strncpy(host, config_mqtt_broker + 8, sizeof(host) - 1);
         use_ssl = true;
         port = 8883;
     } else {
-        strncpy(host, mqtt_broker, sizeof(host) - 1);
+        strncpy(host, config_mqtt_broker, sizeof(host) - 1);
     }
     char *port_str = strchr(host, ':');
     if (port_str) {
         *port_str = '\0'; // Terminate host string at colon
         port = atoi(port_str + 1);
     }
-    printf("mqtt: connecting to '%s' (host='%s', port=%d, ssl=%s)\n", mqtt_broker, host, port,
+    printf("mqtt: connecting to '%s' (host='%s', port=%d, ssl=%s)\n", config_mqtt_broker, host, port,
            use_ssl ? "true" : "false");
     char client_id[24];
     sprintf(client_id, "sensor-radiation-%06X", rand() & 0xFFFFFF);
+    mosquitto_lib_init();
     mosq = mosquitto_new(client_id, true, NULL);
     if (!mosq) {
         fprintf(stderr, "mqtt: error creating client instance\n");
@@ -284,14 +294,7 @@ void mqtt_end(void) {
     mosquitto_disconnect(mosq);
     mosquitto_destroy(mosq);
     mosq = NULL;
-}
-
-void mqtt_send(const char *topic, const char *message) {
-    if (!mosq)
-        return;
-    int result = mosquitto_publish(mosq, NULL, topic, strlen(message), message, 0, false);
-    if (result != MOSQ_ERR_SUCCESS)
-        fprintf(stderr, "mqtt: publish error: %s\n", mosquitto_strerror(result));
+    mosquitto_lib_cleanup();
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -345,7 +348,7 @@ int device_cpm_read(void) {
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 void process_readings(void) {
-    printf("reader: reading CPM every %d seconds, publishing to MQTT '%s'\n", READ_PERIOD, mqtt_topic);
+    printf("reader: reading CPM every %d seconds, publishing to MQTT '%s'\n", READ_PERIOD, config_mqtt_topic);
 
     while (running) {
         if (!serial_check() || serial_fd < 0) {
@@ -373,7 +376,7 @@ void process_readings(void) {
             printf("reader: CPM=%d [%s]\n", cpm, timestamp);
             char cpm_str[16];
             sprintf(cpm_str, "%d", cpm);
-            mqtt_send(mqtt_topic, cpm_str);
+            mqtt_send(config_mqtt_topic, cpm_str);
         } else {
             printf("device: faulty data, probably disconnected\n");
             serial_reconnect();
@@ -390,7 +393,6 @@ void cleanup(void) {
     running = false;
     serial_end();
     mqtt_end();
-    mosquitto_lib_cleanup();
 }
 
 void signal_handler(int sig) {
@@ -408,7 +410,6 @@ int main(int argc, const char **argv) {
         fprintf(stderr, "gqgmctomqtt: failed to load config\n");
         return EXIT_FAILURE;
     }
-    mosquitto_lib_init();
     if (serial_begin()) {
         if (mqtt_begin()) {
             display_device_info();
