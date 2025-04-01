@@ -235,7 +235,8 @@ void mqtt_send(const char *topic, const char *message) {
         fprintf(stderr, "mqtt: publish error: %s\n", mosquitto_strerror(result));
 }
 
-void mqtt_connect_callback(struct mosquitto *mosq __attribute__ ((unused)), void *obj __attribute__ ((unused)), int result) {
+void mqtt_connect_callback(struct mosquitto *mosq __attribute__((unused)), void *obj __attribute__((unused)),
+                           int result) {
     if (result != 0) {
         fprintf(stderr, "mqtt: connect failed: %s\n", mosquitto_connack_string(result));
         return;
@@ -424,7 +425,7 @@ void cleanup(void) {
     mqtt_end();
 }
 
-void signal_handler(int sig __attribute__ ((unused))) {
+void signal_handler(int sig __attribute__((unused))) {
     printf("gqgmctomqtt: terminating\n");
     cleanup();
     exit(EXIT_SUCCESS);
