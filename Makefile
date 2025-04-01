@@ -1,6 +1,6 @@
 
 CC = gcc
-CFLAGS = -O6 -Wall
+CFLAGS = -O6 -Wall -pedantic
 LDFLAGS = -lmosquitto
 TARGET = gqgmctomqtt
 

@@ -251,7 +251,7 @@ bool mqtt_begin(void) {
         use_ssl = true;
         port = 8883;
     } else {
-        strncpy(host, config_mqtt_broker, sizeof(host) - 1);
+        strcpy(host, config_mqtt_broker);
     }
     char *port_str = strchr(host, ':');
     if (port_str) {
