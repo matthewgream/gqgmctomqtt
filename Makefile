@@ -1,6 +1,6 @@
 
 CC = gcc
-CFLAGS = -O6 -Wall -pedantic
+CFLAGS = -O6 -Wall -Wextra -Wpedantic
 LDFLAGS = -lmosquitto
 TARGET = gqgmctomqtt
 
@@ -15,11 +15,14 @@ clean:
 format:
 	clang-format -i $(TARGET).c
 
-install:
+install: $(TARGET)
 	cp $(TARGET).service /etc/systemd/system/
 	systemctl daemon-reload
 	systemctl enable $(TARGET)
 	systemctl start $(TARGET)
 
-.PHONY: all clean format
+test: $(TARGET)
+	./$(TARGET) 
+
+.PHONY: all clean format install test
 
