@@ -288,12 +288,12 @@ bool mqtt_begin(void) {
 }
 
 void mqtt_end(void) {
-    if (!mosq)
-        return;
-    mosquitto_loop_stop(mosq, true);
-    mosquitto_disconnect(mosq);
-    mosquitto_destroy(mosq);
-    mosq = NULL;
+    if (mosq) {
+        mosquitto_loop_stop(mosq, true);
+        mosquitto_disconnect(mosq);
+        mosquitto_destroy(mosq);
+        mosq = NULL;
+    }
     mosquitto_lib_cleanup();
 }
 
