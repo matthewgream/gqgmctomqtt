@@ -3,11 +3,18 @@
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 /*
- * GQ Electronics GMC to MQTT (C Version)
+ * GQ Electronics GMC to MQTT
  *
- * This program connects to a GQ GMC Geiger Counter via serial port and
- * publishes readings to MQTT. It uses the same protocol as the Node.js version
- * but is implemented in C for lower memory usage.
+ * This program connects to a GQ GMC Geiger Counter via serial port and publishes readings to MQTT.
+ *
+ * Configuration file 'secrets.txt' (or otherwise as provided as the first argument to the executable) looks like:
+ *
+ * SERIAL_PORT=/dev/ttyUSB0
+ * SERIAL_RATE=115200
+ * MQTT_SERVER=mqtt://localhost
+ * MQTT_TOPIC=sensors/radiation/cpm
+ * READ_PERIOD=5
+ *
  */
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -28,10 +35,10 @@
 
 #define CONFIG_FILE_DEFAULT "secrets.txt"
 
-#define MQTT_BROKER_DEFAULT "mqtt://localhost"
+#define MQTT_SERVER_DEFAULT "mqtt://localhost"
 #define MQTT_TOPIC_DEFAULT "sensors/radiation/cpm"
 #define SERIAL_PORT_DEFAULT "/dev/ttyUSB0"
-#define SERIAL_BAUD_DEFAULT 115200
+#define SERIAL_RATE_DEFAULT 115200
 #define READ_PERIOD_DEFAULT 30
 
 bool running = true;
@@ -43,10 +50,10 @@ bool running = true;
 #define MAX_CONFIG_VALUE 128
 
 const char *config_file = CONFIG_FILE_DEFAULT;
-char config_mqtt_broker[MAX_CONFIG_VALUE] = MQTT_BROKER_DEFAULT;
+char config_mqtt_server[MAX_CONFIG_VALUE] = MQTT_SERVER_DEFAULT;
 char config_mqtt_topic[MAX_CONFIG_VALUE] = MQTT_TOPIC_DEFAULT;
 char config_serial_port[MAX_CONFIG_VALUE] = SERIAL_PORT_DEFAULT;
-int config_serial_baud = SERIAL_BAUD_DEFAULT;
+int config_serial_rate = SERIAL_RATE_DEFAULT;
 int config_read_period = READ_PERIOD_DEFAULT;
 
 bool config_load(int argc, const char **argv) {
@@ -74,21 +81,21 @@ bool config_load(int argc, const char **argv) {
             end = value + strlen(value) - 1;
             while (end > value && isspace(*end))
                 *end-- = '\0';
-            if (strcmp(key, "MQTT") == 0)
-                strncpy(config_mqtt_broker, value, sizeof(config_mqtt_broker) - 1);
+            if (strcmp(key, "MQTT_SERVER") == 0)
+                strncpy(config_mqtt_server, value, sizeof(config_mqtt_server) - 1);
             else if (strcmp(key, "MQTT_TOPIC") == 0)
                 strncpy(config_mqtt_topic, value, sizeof(config_mqtt_topic) - 1);
-            else if (strcmp(key, "PORT") == 0)
+            else if (strcmp(key, "SERIAL_PORT") == 0)
                 strncpy(config_serial_port, value, sizeof(config_serial_port) - 1);
-            else if (strcmp(key, "RATE") == 0)
-                config_serial_baud = atoi(value);
+            else if (strcmp(key, "SERIAL_RATE") == 0)
+                config_serial_rate = atoi(value);
             else if (strcmp(key, "READ_PERIOD") == 0)
                 config_read_period = atoi(value);
         }
     }
     fclose(file);
-    printf("config: '%s': mqtt=%s, config_mqtt_topic=%s, port=%s, rate=%d, period=%d\n", config_file,
-           config_mqtt_broker, config_mqtt_topic, config_serial_port, config_serial_baud, config_read_period);
+    printf("config: '%s': mqtt=%s, topic=%s, port=%s, rate=%d, period=%d\n", config_file, config_mqtt_server,
+           config_mqtt_topic, config_serial_port, config_serial_rate, config_read_period);
     return true;
 }
 
@@ -100,7 +107,7 @@ int serial_fd = -1;
 bool serial_check(void) { return (access(config_serial_port, F_OK) == 0); }
 
 bool serial_configure(void) {
-    printf("device: config %s at %d baud\n", config_serial_port, config_serial_baud);
+    printf("device: config %s at %d baud\n", config_serial_port, config_serial_rate);
     if (serial_fd >= 0)
         close(serial_fd);
     serial_fd = open(config_serial_port, O_RDWR | O_NOCTTY);
@@ -117,7 +124,7 @@ bool serial_configure(void) {
         return false;
     }
     speed_t baud;
-    switch (config_serial_baud) {
+    switch (config_serial_rate) {
     case 9600:
         baud = B9600;
         break;
@@ -174,6 +181,8 @@ bool serial_connect(void) {
     }
     return false;
 }
+
+bool serial_connected(void) { return serial_fd >= 0; }
 
 void serial_disconnect(void) {
     if (serial_fd < 0)
@@ -248,21 +257,21 @@ bool mqtt_begin(void) {
     char host[MAX_CONFIG_VALUE] = "";
     int port = 1883;
     bool use_ssl = false;
-    if (strncmp(config_mqtt_broker, "mqtt://", 7) == 0) {
-        strncpy(host, config_mqtt_broker + 7, sizeof(host) - 1);
-    } else if (strncmp(config_mqtt_broker, "mqtts://", 8) == 0) {
-        strncpy(host, config_mqtt_broker + 8, sizeof(host) - 1);
+    if (strncmp(config_mqtt_server, "mqtt://", 7) == 0) {
+        strncpy(host, config_mqtt_server + 7, sizeof(host) - 1);
+    } else if (strncmp(config_mqtt_server, "mqtts://", 8) == 0) {
+        strncpy(host, config_mqtt_server + 8, sizeof(host) - 1);
         use_ssl = true;
         port = 8883;
     } else {
-        strcpy(host, config_mqtt_broker);
+        strcpy(host, config_mqtt_server);
     }
     char *port_str = strchr(host, ':');
     if (port_str) {
         *port_str = '\0'; // Terminate host string at colon
         port = atoi(port_str + 1);
     }
-    printf("mqtt: connecting to '%s' (host='%s', port=%d, ssl=%s)\n", config_mqtt_broker, host, port,
+    printf("mqtt: connecting to '%s' (host='%s', port=%d, ssl=%s)\n", config_mqtt_server, host, port,
            use_ssl ? "true" : "false");
     char client_id[24];
     sprintf(client_id, "sensor-radiation-%06X", rand() & 0xFFFFFF);
@@ -364,7 +373,6 @@ bool device_cpm_request(void) {
     const char *command = "<GETCPM>>";
     return serial_write(command, strlen(command));
 }
-
 bool device_cpm_read(int *cpm) {
     unsigned char buffer[4];
     const int read_len = serial_read(buffer, sizeof(buffer), 1000);
@@ -386,7 +394,6 @@ void cpm_display(int cpm) {
     strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", timeinfo);
     printf("reader: CPM=%d [%s]\n", cpm, timestamp);
 }
-
 void cpm_publish(int cpm) {
     char cpm_str[16];
     sprintf(cpm_str, "%d", cpm);
@@ -402,7 +409,7 @@ void process_readings(void) {
     printf("reader: reading CPM every %d seconds, publishing to MQTT '%s'\n", config_read_period, config_mqtt_topic);
     int cpm = 0;
     while (running) {
-        if (!serial_check() || serial_fd < 0)
+        if (!serial_check() || !serial_connected())
             process_fault("device disconnected");
         else if (!device_cpm_request())
             process_fault("device write error");
