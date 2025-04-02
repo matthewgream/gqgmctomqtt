@@ -3,6 +3,7 @@ CC = gcc
 CFLAGS = -O6 -Wall -Wextra -Wpedantic
 LDFLAGS = -lmosquitto
 TARGET = gqgmctomqtt
+HOSTNAME = $(shell hostname)
 
 ##
 
@@ -18,7 +19,7 @@ prettier:
 lint:
 	eslint $(TARGET).js
 test: $(TARGET)
-	./$(TARGET) ./secrets.txt
+	./$(TARGET) $(TARGET).cfg-$(HOSTNAME)
 .PHONY: all clean format test lint
 
 ##

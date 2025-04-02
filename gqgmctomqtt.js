@@ -37,7 +37,7 @@ function configLoad(configPath) {
             });
         return items;
     } catch (err) {
-        console.warn(`config: could not load '${configPath}', using defaults (which may not work correctly)`);
+        console.warn(`config: cannot load '${configPath}', using defaults (which may not work correctly), error:`, err);
         return {};
     }
 }
