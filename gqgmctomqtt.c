@@ -7,7 +7,7 @@
  *
  * This program connects to a GQ GMC Geiger Counter via serial port and publishes readings to MQTT.
  *
- * Configuration file 'secrets.txt' (or otherwise as provided as the first argument to the executable) looks like:
+ * Configuration file 'gqgmctomqtt.txt' (or otherwise as provided as the first argument to the executable) looks like:
  *
  * SERIAL_PORT=/dev/ttyUSB0
  * SERIAL_RATE=115200
@@ -33,7 +33,7 @@
 #include <time.h>
 #include <unistd.h>
 
-#define CONFIG_FILE_DEFAULT "secrets.txt"
+#define CONFIG_FILE_DEFAULT "gqgmctomqtt.cfg"
 
 #define MQTT_SERVER_DEFAULT "mqtt://localhost"
 #define MQTT_TOPIC_DEFAULT "sensors/radiation/cpm"
