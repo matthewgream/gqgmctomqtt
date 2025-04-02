@@ -13,6 +13,8 @@ clean:
 	rm -f $(TARGET)
 format:
 	clang-format -i $(TARGET).c
+prettier:
+	prettier --write $(TARGET).js
 test: $(TARGET)
 	./$(TARGET) ./secrets.txt
 .PHONY: all clean format test
