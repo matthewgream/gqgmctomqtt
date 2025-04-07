@@ -7,6 +7,12 @@
  *
  * This program connects to a GQ GMC Geiger Counter via serial port and publishes readings to MQTT.
  *
+ * Implemented for https://www.gqelectronicsllc.com/download/GQ-RFC1801.txt. To support devices that use
+ * https://www.gqelectronicsllc.com/download/GQ-RFC1201.txt, the GETVOLT command needs modification to read 1 byte
+ * rather than a string, and the GETCPM command needs modification to read 2 bytes rather than 4 bytes.
+ *
+ * Tested on a 'GMC-500+/Re 2.5' on debian 6.1.
+ *
  * Configuration file 'gqgmctomqtt.txt' (or otherwise as provided as the first argument to the executable) looks like:
  *
  * SERIAL_PORT=/dev/ttyUSB0
@@ -23,6 +29,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <math.h>
 #include <mosquitto.h>
 #include <signal.h>
 #include <stdbool.h>
@@ -313,11 +320,11 @@ void mqtt_end(void) {
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-bool device_model_request(void) {
+bool device_getmodel_request(void) {
     const char *command = "<GETVER>>";
     return serial_write(command, strlen(command));
 }
-bool device_model_read(char *model, int length) {
+bool device_getmodel_read(char *model, int length) {
     unsigned char buffer[15];
     const int read_len = serial_read(buffer, sizeof(buffer), 1000);
     if (read_len < 14)
@@ -333,11 +340,11 @@ bool device_model_read(char *model, int length) {
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-bool device_serial_request(void) {
+bool device_getserial_request(void) {
     const char *command = "<GETSERIAL>>";
     return serial_write(command, strlen(command));
 }
-bool device_serial_read(char *serial, int length) {
+bool device_getserial_read(char *serial, int length) {
     unsigned char buffer[8];
     const int read_len = serial_read(buffer, sizeof(buffer), 1000);
     if (read_len < 7)
@@ -353,27 +360,88 @@ bool device_serial_read(char *serial, int length) {
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-bool device_info_display(void) {
-    if (serial_fd < 0)
+bool device_getdatetime_request(void) {
+    const char *command = "<GETDATETIME>>";
+    return serial_write(command, strlen(command));
+}
+bool device_getdatetime_read(char *datetime, int length) {
+    unsigned char buffer[8];
+    const int read_len = serial_read(buffer, sizeof(buffer), 1000);
+    if (read_len < 7)
         return false;
-    serial_flush();
-    char model[15], serial[22];
-    if (!device_model_request() || !device_model_read(model, sizeof(model)))
+    if (length < 30)
         return false;
-    if (!device_serial_request() || !device_serial_read(serial, sizeof(serial)))
-        return false;
-    printf("device: model='%.8s/%.6s', serial='%s'\n", model, model + 8, serial);
+    sprintf(datetime, "20%02d/%02d/%02d %02d:%02d:%02d", buffer[0], buffer[1], buffer[2], buffer[3], buffer[4],
+            buffer[5]);
     return true;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-bool device_cpm_request(void) {
+bool device_getvolt_request(void) {
+    const char *command = "<GETVOLT>>";
+    return serial_write(command, strlen(command));
+}
+bool device_getvolt_read(char *volts, int length) {
+    unsigned char buffer[5];
+    const int read_len = serial_read(buffer, sizeof(buffer), 1000);
+    if (read_len < 4)
+        return false;
+    if (length < 5)
+        return false;
+    memcpy(volts, buffer, 4);
+    volts[4] = '\0';
+    return true;
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+#define MAXIMUM_TIME_DRIFT 5 * 60.0
+
+void device_check_time(const char *datetime) {
+    struct tm device_time = {0};
+    if (sscanf(datetime, "%d/%d/%d %d:%d:%d", &device_time.tm_year, &device_time.tm_mon, &device_time.tm_mday,
+               &device_time.tm_hour, &device_time.tm_min, &device_time.tm_sec) == 6) {
+        device_time.tm_year -= 1900;
+        device_time.tm_mon -= 1;
+        double diff_seconds = difftime(time(NULL), mktime(&device_time));
+        if (fabs(diff_seconds) > MAXIMUM_TIME_DRIFT)
+            printf("WARNING: Device time differs from system time by %.1f minutes!\n", fabs(diff_seconds) / 60.0);
+    }
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+bool device_info_display(void) {
+    if (serial_fd < 0)
+        return false;
+    serial_flush();
+    char model[15], serial[22], datetime[30], volts[5];
+    if (!device_getmodel_request() || !device_getmodel_read(model, sizeof(model)))
+        return false;
+    if (!device_getserial_request() || !device_getserial_read(serial, sizeof(serial)))
+        return false;
+    if (!device_getdatetime_request() || !device_getdatetime_read(datetime, sizeof(datetime)))
+        return false;
+    device_check_time(datetime);
+    if (!device_getvolt_request() || !device_getvolt_read(volts, sizeof(volts)))
+        return false;
+    printf("device: model='%.8s/%.6s', serial='%s', datetime='%s', volts='%s'\n", model, model + 8, serial, datetime,
+           volts);
+    return true;
+}
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+bool device_getcpm_request(void) {
     const char *command = "<GETCPM>>";
     return serial_write(command, strlen(command));
 }
-bool device_cpm_read(int *cpm) {
+bool device_getcpm_read(int *cpm) {
     unsigned char buffer[4];
     const int read_len = serial_read(buffer, sizeof(buffer), 1000);
     if (read_len < 4)
@@ -411,9 +479,9 @@ void process_readings(void) {
     while (running) {
         if (!serial_check() || !serial_connected())
             process_fault("device disconnected");
-        else if (!device_cpm_request())
+        else if (!device_getcpm_request())
             process_fault("device write error");
-        else if (!device_cpm_read(&cpm) || !cpm_is_reasonable(cpm))
+        else if (!device_getcpm_read(&cpm) || !cpm_is_reasonable(cpm))
             process_fault("short or faulty data, device probably disconnected");
         else {
             cpm_display(cpm);

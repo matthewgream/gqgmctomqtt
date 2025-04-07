@@ -3,9 +3,9 @@
 // GQ Electronics GMC to MQTT
 //
 // This script connects to a GQ GMC Geiger Counter via serial port and publishes readings to MQTT.
-// It does not use the heartbeat feature which returns CPS ratrher than CPM.
+// It does not use the heartbeat feature which returns CPS rather than CPM.
 //
-// https://www.gqelectronicsllc.com/download/GQ-RFC1201.txt
+// https://www.gqelectronicsllc.com/download/GQ-RFC1801.txt
 //
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -54,8 +54,8 @@ console.log(
 let mqttClient = null;
 
 function mqttBegin() {
-    console.log(`mqtt: connecting to '${conf.MQTT}'`);
-    mqttClient = mqtt.connect(conf.MQTT, {
+    console.log(`mqtt: connecting to '${conf.MQTT_SERVER}'`);
+    mqttClient = mqtt.connect(conf.MQTT_SERVER, {
         clientId: 'sensor-radiation-' + Math.random().toString(16).substring(2, 8),
     });
     mqttClient.on('connect', () => {
@@ -76,7 +76,7 @@ function mqttEnd() {
     }
 }
 
-console.log(`Loaded 'mqtt' using '${conf.MQTT}'`);
+console.log(`Loaded 'mqtt' using '${conf.MQTT_SERVER}'`);
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -85,19 +85,19 @@ let port = null;
 
 async function deviceSerialCheck() {
     try {
-        await fs.promises.access(conf.PORT);
+        await fs.promises.access(conf.SERIAL_PORT);
         return true;
     } catch {
         return false;
     }
 }
 async function deviceSerialConfig() {
-    console.log(`device: configure ${conf.PORT} at ${conf.RATE} baud`);
+    console.log(`device: configure ${conf.SERIAL_PORT} at ${conf.SERIAL_RATE} baud`);
     try {
         if (port) await new Promise((resolve) => port.close(resolve));
         port = new SerialPort({
-            path: conf.PORT,
-            baudRate: parseInt(conf.RATE),
+            path: conf.SERIAL_PORT,
+            baudRate: parseInt(conf.SERIAL_RATE),
             dataBits: 8,
             stopBits: 1,
             parity: 'none',
@@ -173,7 +173,7 @@ async function deviceSerialReconnect() {
     console.log(`device: reconnected, resuming`);
 }
 
-console.log(`Loaded 'device' using '${conf.PORT}'`);
+console.log(`Loaded 'device' using '${conf.SERIAL_PORT}'`);
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -187,7 +187,13 @@ async function deviceInfoDisplay() {
     const serial = Array.from(await deviceSerialRead(7))
         .map((byte) => byte.toString(16).padStart(2, '0').toUpperCase())
         .join(' ');
-    console.log(`device: model='${model.substring(0, 8)}/${model.substring(8)}', serial='${serial}'`);
+    await deviceSerialSend('<GETVOLT>>');
+    const volts = await deviceSerialRead(5);
+    await deviceSerialSend('<GETDATETIME>>');
+    const dt = await deviceSerialRead(7);
+    const pad = (num) => String(num).padStart(2, '0');
+    const datetime = `20${pad(dt[0])}/${pad(dt[1])}/${pad(dt[2])} ${pad(dt[3])}:${pad(dt[4])}:${pad(dt[5])}`;
+    console.log(`device: model='${model.substring(0, 8)}/${model.substring(8)}', serial='${serial}', datetime='${datetime}', volts='${volts}'`);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
