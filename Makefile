@@ -35,6 +35,10 @@ define install_systemd_service
 endef
 install_target: $(TARGET).service
 	$(call install_systemd_service,$(TARGET),$(TARGET))
-install: install_target
+install_udev:
+	cp 90-*.rules /etc/udev/rules.d
+	udevadm control --reload-rules
+	udevadm trigger
+install: install_udev install_target
 .PHONY: install install_target
 
