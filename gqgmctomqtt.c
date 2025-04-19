@@ -553,12 +553,19 @@ int main(int argc, const char **argv) {
         fprintf(stderr, "gqgmctomqtt: failed to load config\n");
         return EXIT_FAILURE;
     }
-    if (serial_begin()) {
-        if (mqtt_begin()) {
-            device_info_display();
-            process_readings();
-        }
+    if (!serial_begin()) {
+        fprintf(stderr, "gqgmctomqtt: failed to begin serial\n");
+        return EXIT_FAILURE;
     }
+    if (!mqtt_begin()) {
+        fprintf(stderr, "gqgmctomqtt: failed to begin mqtt\n");
+        serial_end();
+        return EXIT_FAILURE;
+    }
+
+    device_info_display();
+    process_readings();
+
     cleanup();
     return EXIT_SUCCESS;
 }
