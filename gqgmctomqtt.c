@@ -504,7 +504,7 @@ bool device_info_display(void) {
 #define ADDRESS_CALIBRATE3_SV 0x16
 
 typedef struct {
-    unsigned short cal1_cpm, cal2_cpm, cal3_cpm;
+    int cal1_cpm, cal2_cpm, cal3_cpm;
     float cal1_sv, cal2_sv, cal3_sv;
 } device_cfg_t;
 
@@ -515,9 +515,9 @@ bool device_cfg_process_and_display(void) {
     unsigned char cfg[DEVICE_GETCFG_SIZE];
     if (!device_getcfg(cfg, sizeof(cfg)))
         return false;
-    device_cfg.cal1_cpm = __unpack_h(&cfg[ADDRESS_CALIBRATE1_CPM]);
-    device_cfg.cal2_cpm = __unpack_h(&cfg[ADDRESS_CALIBRATE2_CPM]);
-    device_cfg.cal3_cpm = __unpack_h(&cfg[ADDRESS_CALIBRATE3_CPM]);
+    device_cfg.cal1_cpm = (int)__unpack_h(&cfg[ADDRESS_CALIBRATE1_CPM]);
+    device_cfg.cal2_cpm = (int)__unpack_h(&cfg[ADDRESS_CALIBRATE2_CPM]);
+    device_cfg.cal3_cpm = (int)__unpack_h(&cfg[ADDRESS_CALIBRATE3_CPM]);
     device_cfg.cal1_sv = __unpack_f(&cfg[ADDRESS_CALIBRATE1_SV]);
     device_cfg.cal2_sv = __unpack_f(&cfg[ADDRESS_CALIBRATE2_SV]);
     device_cfg.cal3_sv = __unpack_f(&cfg[ADDRESS_CALIBRATE3_SV]);
@@ -527,19 +527,75 @@ bool device_cfg_process_and_display(void) {
     return true;
 }
 
-void device_get_conversion_factor(int *ref_cpm, double *ref_usv) {
-    const double cal1_factor = device_cfg.cal1_sv * 1000.0 / (double)device_cfg.cal1_cpm;
-    const double cal2_factor = device_cfg.cal2_sv * 1000.0 / (double)device_cfg.cal2_cpm;
-    const double cal3_factor = device_cfg.cal3_sv * 1000.0 / (double)device_cfg.cal3_cpm;
-    *ref_cpm = 1000;
-    *ref_usv = (cal1_factor + cal2_factor + cal3_factor) / 3.0;
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+typedef struct {
+    int cpm_max;
+    float slope, intercept;
+} calibration_point_t;
+
+typedef struct {
+    calibration_point_t *points;
+    size_t count;
+} calibration_data_t;
+
+calibration_data_t calib_data;
+
+void set_usvh_calibration(calibration_data_t *calib_data, const device_cfg_t *cfg) {
+    if (calib_data->points != NULL) {
+        free(calib_data->points);
+        calib_data->points = NULL;
+        calib_data->count = 0;
+    }
+    struct {
+        int cpm;
+        float usv;
+    } temp_points[4] = {
+        {0, 0.0f}, {cfg->cal1_cpm, cfg->cal1_sv}, {cfg->cal2_cpm, cfg->cal2_sv}, {cfg->cal3_cpm, cfg->cal3_sv}};
+    if ((calib_data->points = malloc(3 * sizeof(calibration_point_t))) != NULL) {
+        calib_data->count = 0;
+        for (int i = 0; i < 3; i++) {
+            const int cpm_s = temp_points[i].cpm, cpm_e = temp_points[i + 1].cpm;
+            const float usv_s = temp_points[i].usv, usv_e = temp_points[i + 1].usv;
+            if (cpm_e > cpm_s) {
+                const float m = (usv_e - usv_s) / ((float)(cpm_e - cpm_s));
+                const float b = -(m * cpm_e) + usv_e;
+                calib_data->points[calib_data->count].cpm_max = cpm_e;
+                calib_data->points[calib_data->count].slope = m;
+                calib_data->points[calib_data->count].intercept = b;
+                calib_data->count++;
+            }
+        }
+    }
 }
 
-double device_convert_cpm_to_usievert(const int cpm) {
-    int ref_cpm;
-    double ref_usv;
-    device_get_conversion_factor(&ref_cpm, &ref_usv);
-    return (double)cpm * ref_usv / (double)ref_cpm;
+float get_usvh_calibrated(calibration_data_t *calib_data, const int cpm) {
+    float usvh = -1.0f;
+    if (calib_data->count > 0 && calib_data->points != NULL) {
+        for (size_t i = 0; i < calib_data->count; i++)
+            if (cpm <= calib_data->points[i].cpm_max) {
+                usvh = cpm * calib_data->points[i].slope + calib_data->points[i].intercept;
+                break;
+            }
+        if (usvh < 0 && calib_data->count > 0)
+            usvh = cpm * calib_data->points[calib_data->count - 1].slope +
+                   calib_data->points[calib_data->count - 1].intercept;
+    }
+    return usvh;
+}
+
+void calibration_begin(calibration_data_t *calib_data, const device_cfg_t *device_cfg) {
+    calib_data->points = NULL;
+    calib_data->count = 0;
+    set_usvh_calibration(calib_data, device_cfg);
+}
+
+void calibration_end(calibration_data_t *calib_data) {
+    if (calib_data->points != NULL) {
+        free(calib_data->points);
+        calib_data->points = NULL;
+    }
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -593,7 +649,7 @@ readings_t readings_update(const int cpm) {
     }
     r.cpm = cpm;
     r.acpm = (total_weight > 0) ? (total_weighted_count / total_weight) : cpm;
-    r.usvh = device_convert_cpm_to_usievert(cpm);
+    r.usvh = get_usvh_calibrated(&calib_data, cpm);
     state.last_update_time = current_time;
     return r;
 }
@@ -657,6 +713,7 @@ void process_readings(void) {
                config_gmcmap_counter_id);
     printf("\n");
 
+    calibration_begin(&calib_data, &device_cfg);
     readings_begin(PROCESS_READINGS_SAMPLE_PERIOD, (PROCESS_READINGS_SAMPLE_PERIOD / config_read_period) * 1.25);
     int cpm = 0;
     while (running) {
@@ -677,6 +734,7 @@ void process_readings(void) {
         }
     }
     readings_end();
+    calibration_end(&calib_data);
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
