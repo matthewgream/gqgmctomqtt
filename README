@@ -1,9 +1,12 @@
 Currently implemented for a GQ Electronics GMC-500+ over serial USB (defaults to /dev/ttyUSB0) to:
 (1) read, at serial configuration time, device model (hardware and firmware) and serial number.
+    also read device config cpm/Svh calibration values.
 (2) loop indefinitely to read/report CPM with specified periodicity (defaults to 30 seconds):
-  (2a) report CPM to stdout.
-  (2b) report CPM to MQTT (default broker mqtt://localhost and topic sensors/radiation/cpm).
-  (2c) if serial disconnection or fault, wait and poll until serial is reconnected, then resume (step 1)
+  (2a) calculate CPM average (rolling period 1 hour) and uSvH (based on calibration values).
+  (2b) report CPM to stdout.
+  (2c) report CPM to MQTT, if configured (default broker mqtt://localhost and topic sensors/radiation).
+  (2d) report CPM to GMCMAP, if configured (using specified user_id and counter_id).
+  (2e) if serial disconnection or fault, wait and poll until serial is reconnected, then resume (step 1)
 The communication specification from GC Electronics is at https://www.gqelectronicsllc.com/download/GQ-RFC1801.txt
 (to support GQ-RFC1201.txt based devices, a couple of modifications are needed as stated in the .c source)
 Note the hearbeat mode is not used as it reports CPS that needs translation to CPM.
