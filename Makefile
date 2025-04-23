@@ -13,11 +13,7 @@ all: $(TARGET)
 clean:
 	rm -f $(TARGET)
 format:
-	clang-format -i $(TARGET).c
-prettier:
-	prettier --write $(TARGET).js
-lint:
-	eslint $(TARGET).js
+	clang-format -i $(TARGET).c include/*.h
 test: $(TARGET)
 	./$(TARGET) $(TARGET).cfg-$(HOSTNAME)
 .PHONY: all clean format test lint

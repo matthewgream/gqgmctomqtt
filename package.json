@@ -1,6 +1,0 @@
-{
-  "dependencies": {
-    "mqtt": "^5.10.4",
-    "serialport": "^13.0.0"
-  }
-}

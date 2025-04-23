@@ -1,5 +1,7 @@
 node_modules
 package-lock.json
-gqgmctomqtt
 eslint.config.mjs
+gqgmctomqtt
 gqgmctomqtt.cfg-*
+gqgmcconfig
+gqgmcconfig.cfg-*
