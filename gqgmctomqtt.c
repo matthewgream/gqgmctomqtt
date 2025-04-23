@@ -540,8 +540,6 @@ typedef struct {
     size_t count;
 } calibration_data_t;
 
-calibration_data_t calib_data;
-
 void set_usvh_calibration(calibration_data_t *calib_data, const device_cfg_t *cfg) {
     if (calib_data->points != NULL) {
         free(calib_data->points);
@@ -570,7 +568,7 @@ void set_usvh_calibration(calibration_data_t *calib_data, const device_cfg_t *cf
     }
 }
 
-float get_usvh_calibrated(calibration_data_t *calib_data, const int cpm) {
+float get_usvh_calibrated(const calibration_data_t *calib_data, const int cpm) {
     float usvh = -1.0f;
     if (calib_data->count > 0 && calib_data->points != NULL) {
         for (size_t i = 0; i < calib_data->count; i++)
@@ -629,7 +627,7 @@ void readings_begin(const int period, const int count) {
 }
 void readings_end(void) { free(state.history_store); }
 
-readings_t readings_update(const int cpm) {
+readings_t readings_update(const int cpm, const calibration_data_t *calib_data) {
     readings_t r;
     const time_t current_time = time(NULL);
     const sample_t sample = {.timestamp = current_time, .cpm = cpm};
@@ -649,7 +647,7 @@ readings_t readings_update(const int cpm) {
     }
     r.cpm = cpm;
     r.acpm = (total_weight > 0) ? (total_weighted_count / total_weight) : cpm;
-    r.usvh = get_usvh_calibrated(&calib_data, cpm);
+    r.usvh = get_usvh_calibrated(calib_data, cpm);
     state.last_update_time = current_time;
     return r;
 }
@@ -713,6 +711,7 @@ void process_readings(void) {
                config_gmcmap_counter_id);
     printf("\n");
 
+    calibration_data_t calib_data;
     calibration_begin(&calib_data, &device_cfg);
     readings_begin(PROCESS_READINGS_SAMPLE_PERIOD, (PROCESS_READINGS_SAMPLE_PERIOD / config_read_period) * 1.25);
     int cpm = 0;
@@ -724,7 +723,7 @@ void process_readings(void) {
         else if (!device_getcpm_read(&cpm) || !cpm_is_reasonable(cpm))
             process_fault("short or faulty data, device probably disconnected");
         else {
-            const readings_t readings = readings_update(cpm);
+            const readings_t readings = readings_update(cpm, &calib_data);
             cpm_display(&readings);
             if (publish_mqtt)
                 cpm_publish_mqtt(&readings, config_mqtt_topic);
