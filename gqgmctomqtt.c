@@ -625,6 +625,7 @@ void readings_begin(const int period, const int count) {
     state.last_update_time = time(NULL);
     printf("sample: period=%d, count=%d\n", period, count);
 }
+
 void readings_end(void) { free(state.history_store); }
 
 readings_t readings_update(const int cpm, const calibration_data_t *calib_data) {
@@ -665,10 +666,9 @@ void cpm_display(const readings_t *readings) {
 }
 
 void cpm_publish_mqtt(const readings_t *readings, const char *mqtt_topic) {
-    char cpm_topic[CONFIG_MAX_VALUE], cpm_value[16];
-    sprintf(cpm_topic, "%s/cpm", mqtt_topic);
-    sprintf(cpm_value, "%d", readings->cpm);
-    mqtt_send(cpm_topic, cpm_value, strlen(cpm_value));
+    char json_payload[128];
+    sprintf(json_payload, "{\"cpm\":%d,\"acpm\":%.2f,\"usvh\":%.2f}", readings->cpm, readings->acpm, readings->usvh);
+    mqtt_send(mqtt_topic, json_payload, strlen(json_payload));
 }
 
 bool __publish_gmcmap(const char *user, const char *device, const int cpm, const double acpm, const double usvh) {
