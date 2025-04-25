@@ -3,9 +3,9 @@
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 /*
- * GQ Electronics GMC to MQTT
+ * GQ Electronics GMC to MQTT/GMCMAP
  *
- * This program connects to a GQ GMC Geiger Counter via serial port and publishes readings to MQTT.
+ * This program connects to a GQ GMC Geiger Counter via serial port and publishes readings to MQTT/GMCMAP.
  *
  * Implemented for https://www.gqelectronicsllc.com/download/GQ-RFC1801.txt. To support devices that use
  * https://www.gqelectronicsllc.com/download/GQ-RFC1201.txt, the GETVOLT command needs modification to read 1 byte
@@ -30,17 +30,53 @@
 
 #include <arpa/inet.h>
 #include <ctype.h>
-#include <errno.h>
-#include <fcntl.h>
 #include <math.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <termios.h>
 #include <time.h>
-#include <unistd.h>
+
+#include "include/util_linux.h"
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+#define CONFIG_FILE_DEFAULT "gqgmctomqtt.cfg"
+
+#define SERIAL_PORT_DEFAULT "/dev/ttyUSB0"
+#define SERIAL_RATE_DEFAULT 115200
+#define READ_PERIOD_DEFAULT 30
+#define MQTT_SERVER_DEFAULT "mqtt://localhost"
+#define MQTT_TOPIC_DEFAULT "sensors/radiation"
+#define GMCMAP_USER_ID_DEFAULT ""
+#define GMCMAP_COUNTER_ID_DEFAULT ""
+
+// -----------------------------------------------------------------------------------------------------------------------------------------
+// -----------------------------------------------------------------------------------------------------------------------------------------
+
+#define SERIAL_READ_TIMEOUT 1000
+
+#include <stdarg.h>
+
+void printf_stdout(const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    vfprintf(stdout, format, args);
+    va_end(args);
+}
+void printf_stderr(const char *format, ...) {
+    va_list args;
+    va_start(args, format);
+    vfprintf(stderr, format, args);
+    va_end(args);
+}
+
+#define PRINTF_ERROR printf_stderr
+#define PRINTF_INFO printf_stdout
+
+#include "include/serial_linux.h"
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -51,51 +87,17 @@
 
 #include "include/mqtt_linux.h"
 
-#include "include/http_linux.h"
-
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
-
-#define CONFIG_FILE_DEFAULT "gqgmctomqtt.cfg"
-
-#define MQTT_SERVER_DEFAULT "mqtt://localhost"
-#define MQTT_TOPIC_DEFAULT "sensors/radiation"
-#define SERIAL_PORT_DEFAULT "/dev/ttyUSB0"
-#define SERIAL_RATE_DEFAULT 115200
-#define READ_PERIOD_DEFAULT 30
-
-volatile bool running = true;
-
-#define MQTT_CONNECT_TIMEOUT 60
-#define MQTT_PUBLISH_QOS 0
-#define MQTT_PUBLISH_RETAIN false
 
 #define GMCMAP_PUBLISH_PERIOD 60
 
-#define SERIAL_READ_TIMEOUT 1000
+#include "include/http_linux.h"
 
-// -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-unsigned short __unpack_h(const unsigned char *x) { return (x[0] << 8) | x[1]; }
-
-float __unpack_f(const unsigned char *x) {
-    union {
-        uint32_t i;
-        float f;
-    } u;
-    memcpy(&u.i, x, sizeof(uint32_t));
-    u.i = ntohl(u.i);
-    return u.f;
-}
-
-bool intervalable(const time_t period, time_t *previous) {
-    const time_t current = time(NULL);
-    if (current >= (*previous + period)) {
-        *previous = current;
-        return true;
-    }
-    return false;
+bool gmcmap_send(const char *user, const char *device, const int cpm, const double acpm, const double usvh) {
+    char url[256], buf[BUF_SIZE];
+    sprintf(url, "/log2.asp?AID=%s&GID=%s&CPM=%d&ACPM=%.2f&uSV=%.2f", user, device, cpm, acpm, usvh);
+    return http_get("www.gmcmap.com", "80", url, buf, sizeof(buf)) && strstr(buf, "OK.") != NULL;
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -107,8 +109,8 @@ bool intervalable(const time_t period, time_t *previous) {
 const char *config_file = CONFIG_FILE_DEFAULT;
 char config_mqtt_server[CONFIG_MAX_VALUE] = MQTT_SERVER_DEFAULT;
 char config_mqtt_topic[CONFIG_MAX_VALUE] = MQTT_TOPIC_DEFAULT;
-char config_gmcmap_user_id[CONFIG_MAX_VALUE] = "";
-char config_gmcmap_counter_id[CONFIG_MAX_VALUE] = "";
+char config_gmcmap_user_id[CONFIG_MAX_VALUE] = GMCMAP_USER_ID_DEFAULT;
+char config_gmcmap_counter_id[CONFIG_MAX_VALUE] = GMCMAP_COUNTER_ID_DEFAULT;
 char config_serial_port[CONFIG_MAX_VALUE] = SERIAL_PORT_DEFAULT;
 int config_serial_rate = SERIAL_RATE_DEFAULT;
 int config_read_period = READ_PERIOD_DEFAULT;
@@ -164,151 +166,11 @@ bool config_load(const int argc, const char **argv) {
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-int serial_fd = -1;
-
-bool serial_check(void) { return (access(config_serial_port, F_OK) == 0); }
-
-bool serial_connect(void) {
-    printf("device: config %s at %d baud\n", config_serial_port, config_serial_rate);
-    if (serial_fd >= 0)
-        close(serial_fd);
-    serial_fd = open(config_serial_port, O_RDWR | O_NOCTTY);
-    if (serial_fd < 0) {
-        fprintf(stderr, "device: error accessing serial port: %s\n", strerror(errno));
-        return false;
-    }
-    struct termios tty;
-    memset(&tty, 0, sizeof(tty));
-    if (tcgetattr(serial_fd, &tty) != 0) {
-        fprintf(stderr, "device: error getting serial port attributes: %s\n", strerror(errno));
-        close(serial_fd);
-        serial_fd = -1;
-        return false;
-    }
-    speed_t baud;
-    switch (config_serial_rate) {
-    case 9600:
-        baud = B9600;
-        break;
-    case 19200:
-        baud = B19200;
-        break;
-    case 38400:
-        baud = B38400;
-        break;
-    case 57600:
-        baud = B57600;
-        break;
-    case 115200:
-    default:
-        baud = B115200;
-        break;
-    }
-    cfsetispeed(&tty, baud);
-    cfsetospeed(&tty, baud);
-    tty.c_cflag |= (CLOCAL | CREAD); // Enable receiver, ignore modem control lines
-    tty.c_cflag &= ~CSIZE;
-    tty.c_cflag |= CS8;      // 8-bit chars
-    tty.c_cflag &= ~PARENB;  // No parity
-    tty.c_cflag &= ~CSTOPB;  // 1 stop bit
-    tty.c_cflag &= ~CRTSCTS; // No hardware flow control
-    tty.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
-    tty.c_oflag &= ~OPOST;
-    tty.c_iflag &= ~(IXON | IXOFF | IXANY);
-    tty.c_cc[VMIN] = 0;  // Read doesn't block
-    tty.c_cc[VTIME] = 5; // 0.5 seconds read timeout
-    if (tcsetattr(serial_fd, TCSANOW, &tty) != 0) {
-        fprintf(stderr, "device: error setting serial port attributes: %s\n", strerror(errno));
-        close(serial_fd);
-        serial_fd = -1;
-        return false;
-    }
-    return true;
-}
-
-#define SERIAL_CONNECT_CHECK_PERIOD 5
-#define SERIAL_CONNECT_CHECK_PRINT 30
-bool serial_connect_wait(volatile bool *running) {
-    int counter = 0;
-    while (*running) {
-        if (serial_check()) {
-            if (!serial_connect())
-                return false;
-            printf("device: connected\n");
-            return true;
-        }
-        if (counter++ % (SERIAL_CONNECT_CHECK_PRINT / SERIAL_CONNECT_CHECK_PERIOD) == 0)
-            printf("device: connection pending\n");
-        sleep(SERIAL_CONNECT_CHECK_PERIOD);
-    }
-    return false;
-}
-
-bool serial_connected(void) { return serial_fd >= 0; }
-
-void serial_disconnect(void) {
-    if (serial_fd < 0)
-        return;
-    close(serial_fd);
-    serial_fd = -1;
-}
-
-bool serial_write(const char *cmd, ssize_t len) {
-    if (serial_fd < 0)
-        return false;
-    return write(serial_fd, cmd, len) == len;
-}
-
-int serial_read(unsigned char *buffer, const int length, const int timeout_ms) {
-    if (serial_fd < 0)
-        return -1;
-    usleep(50 * 1000); // yuck
-    fd_set rdset;
-    struct timeval tv;
-    FD_ZERO(&rdset);
-    FD_SET(serial_fd, &rdset);
-    tv.tv_sec = timeout_ms / 1000;
-    tv.tv_usec = (timeout_ms % 1000) * 1000;
-    const int select_result = select(serial_fd + 1, &rdset, NULL, NULL, &tv);
-    if (select_result <= 0)
-        return select_result; // timeout or error
-    int bytes_read = 0;
-    unsigned char byte;
-    bool buffer_complete = false;
-    while (bytes_read < length) {
-        FD_ZERO(&rdset);
-        FD_SET(serial_fd, &rdset);
-        tv.tv_sec = 0;
-        tv.tv_usec = 100000;
-        if (select(serial_fd + 1, &rdset, NULL, NULL, &tv) <= 0) {
-            buffer_complete = true;
-            break;
-        }
-        if (read(serial_fd, &byte, 1) != 1)
-            break;
-        buffer[bytes_read++] = byte;
-    }
-    if (!buffer_complete && bytes_read > length) {
-        fprintf(stderr, "device: buffer_read: buffer too large (max %d bytes, read %d bytes)\n", length, bytes_read);
-        return -1;
-    }
-    return bytes_read;
-}
-
-void serial_flush(void) {
-    if (serial_fd < 0)
-        return;
-    tcflush(serial_fd, TCIOFLUSH);
-}
-
-// -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
 #define DEVICE_GETMODEL_SIZE 15
 
 bool device_getmodel(char *model, const int length) {
     const char command[] = "<GETVER>>";
-    if (!serial_write(command, sizeof(command) - 1))
+    if (!serial_write_all((const unsigned char *)command, sizeof(command) - 1))
         return false;
     unsigned char buffer[15];
     const int read_len = serial_read(buffer, sizeof(buffer), SERIAL_READ_TIMEOUT);
@@ -323,13 +185,12 @@ bool device_getmodel(char *model, const int length) {
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
 
 #define DEVICE_GETSERIAL_SIZE 21
 
 bool device_getserial(char *serial, const int length) {
     const char command[] = "<GETSERIAL>>";
-    if (!serial_write(command, sizeof(command) - 1))
+    if (!serial_write_all((const unsigned char *)command, sizeof(command) - 1))
         return false;
     unsigned char buffer[7];
     const int read_len = serial_read(buffer, sizeof(buffer), SERIAL_READ_TIMEOUT);
@@ -344,13 +205,24 @@ bool device_getserial(char *serial, const int length) {
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
+
+#define CFG_OFFSERT_CALIBRATE1_CPM 0x08
+#define CFG_OFFSERT_CALIBRATE1_SV 0x0a
+#define CFG_OFFSERT_CALIBRATE2_CPM 0x0e
+#define CFG_OFFSERT_CALIBRATE2_SV 0x10
+#define CFG_OFFSERT_CALIBRATE3_CPM 0x14
+#define CFG_OFFSERT_CALIBRATE3_SV 0x16
+
+typedef struct {
+    int cal1_cpm, cal2_cpm, cal3_cpm;
+    float cal1_sv, cal2_sv, cal3_sv;
+} device_conf_t;
 
 #define DEVICE_GETCFG_SIZE 512
 
-bool device_getcfg(unsigned char *cfg, const int length) {
+bool __device_getcfg(unsigned char *cfg, const int length) {
     const char command[] = "<GETCFG>>";
-    if (!serial_write(command, sizeof(command) - 1))
+    if (!serial_write_all((const unsigned char *)command, sizeof(command) - 1))
         return false;
     unsigned char buffer[512];
     const int read_len = serial_read(buffer, sizeof(buffer), SERIAL_READ_TIMEOUT);
@@ -361,15 +233,27 @@ bool device_getcfg(unsigned char *cfg, const int length) {
     memcpy(cfg, buffer, sizeof(buffer));
     return true;
 }
+bool device_getcfg(device_conf_t *config) {
+    unsigned char cfg[DEVICE_GETCFG_SIZE];
+    if (!__device_getcfg(cfg, sizeof(cfg)))
+        return false;
+    // hexdump(cfg, sizeof (cfg), "    ");
+    config->cal1_cpm = (int)__unpack_h(&cfg[CFG_OFFSERT_CALIBRATE1_CPM]);
+    config->cal2_cpm = (int)__unpack_h(&cfg[CFG_OFFSERT_CALIBRATE2_CPM]);
+    config->cal3_cpm = (int)__unpack_h(&cfg[CFG_OFFSERT_CALIBRATE3_CPM]);
+    config->cal1_sv = __unpack_f(&cfg[CFG_OFFSERT_CALIBRATE1_SV]);
+    config->cal2_sv = __unpack_f(&cfg[CFG_OFFSERT_CALIBRATE2_SV]);
+    config->cal3_sv = __unpack_f(&cfg[CFG_OFFSERT_CALIBRATE3_SV]);
+    return true;
+}
 
-// -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
 #define DEVICE_GETDATETIME_SIZE 30
 
 bool device_getdatetime(char *datetime, const int length) {
     const char command[] = "<GETDATETIME>>";
-    if (!serial_write(command, sizeof(command) - 1))
+    if (!serial_write_all((const unsigned char *)command, sizeof(command) - 1))
         return false;
     unsigned char buffer[7];
     const int read_len = serial_read(buffer, sizeof(buffer), SERIAL_READ_TIMEOUT);
@@ -383,7 +267,6 @@ bool device_getdatetime(char *datetime, const int length) {
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
 
 bool device_setdatetime(const unsigned char year, const unsigned char month, const unsigned char day,
                         const unsigned char hour, const unsigned char minute, const unsigned char second) {
@@ -395,7 +278,7 @@ bool device_setdatetime(const unsigned char year, const unsigned char month, con
     *datetime++ = hour;
     *datetime++ = minute;
     *datetime++ = second;
-    if (!serial_write(command, sizeof(command) - 1))
+    if (!serial_write_all((const unsigned char *)command, sizeof(command) - 1))
         return false;
     unsigned char confirmation = 0;
     const int read_len = serial_read(&confirmation, 1, SERIAL_READ_TIMEOUT);
@@ -407,13 +290,12 @@ bool device_setdatetime(const unsigned char year, const unsigned char month, con
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
 
 #define DEVICE_GETVOLT_SIZE 5
 
 bool device_getvolt(char *volts, const int length) {
     const char command[] = "<GETVOLT>>";
-    if (!serial_write(command, sizeof(command) - 1))
+    if (!serial_write_all((const unsigned char *)command, sizeof(command) - 1))
         return false;
     unsigned char buffer[5];
     const int read_len = serial_read(buffer, sizeof(buffer), SERIAL_READ_TIMEOUT);
@@ -427,11 +309,10 @@ bool device_getvolt(char *volts, const int length) {
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
 
 bool device_getcpm_request(void) {
     const char command[] = "<GETCPM>>";
-    return serial_write(command, sizeof(command) - 1);
+    return serial_write_all((const unsigned char *)command, sizeof(command) - 1);
 }
 bool device_getcpm_read(int *cpm) {
     unsigned char buffer[4];
@@ -473,9 +354,6 @@ bool device_time_write(void) {
     return true;
 }
 
-// -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
 bool device_info_display(void) {
     serial_flush();
     char model[DEVICE_GETMODEL_SIZE], serial[DEVICE_GETSERIAL_SIZE], datetime[DEVICE_GETDATETIME_SIZE],
@@ -493,37 +371,14 @@ bool device_info_display(void) {
     return true;
 }
 
-// -----------------------------------------------------------------------------------------------------------------------------------------
-// -----------------------------------------------------------------------------------------------------------------------------------------
-
-#define ADDRESS_CALIBRATE1_CPM 0x08
-#define ADDRESS_CALIBRATE1_SV 0x0a
-#define ADDRESS_CALIBRATE2_CPM 0x0e
-#define ADDRESS_CALIBRATE2_SV 0x10
-#define ADDRESS_CALIBRATE3_CPM 0x14
-#define ADDRESS_CALIBRATE3_SV 0x16
-
-typedef struct {
-    int cal1_cpm, cal2_cpm, cal3_cpm;
-    float cal1_sv, cal2_sv, cal3_sv;
-} device_cfg_t;
-
-device_cfg_t device_cfg;
-
-bool device_cfg_process_and_display(void) {
+device_conf_t device_conf;
+bool device_conf_load_and_display(void) {
     serial_flush();
-    unsigned char cfg[DEVICE_GETCFG_SIZE];
-    if (!device_getcfg(cfg, sizeof(cfg)))
+    if (!device_getcfg(&device_conf))
         return false;
-    device_cfg.cal1_cpm = (int)__unpack_h(&cfg[ADDRESS_CALIBRATE1_CPM]);
-    device_cfg.cal2_cpm = (int)__unpack_h(&cfg[ADDRESS_CALIBRATE2_CPM]);
-    device_cfg.cal3_cpm = (int)__unpack_h(&cfg[ADDRESS_CALIBRATE3_CPM]);
-    device_cfg.cal1_sv = __unpack_f(&cfg[ADDRESS_CALIBRATE1_SV]);
-    device_cfg.cal2_sv = __unpack_f(&cfg[ADDRESS_CALIBRATE2_SV]);
-    device_cfg.cal3_sv = __unpack_f(&cfg[ADDRESS_CALIBRATE3_SV]);
     printf("device: config: cal1=(%u cpm: %.6f Sv/h), cal2=(%u cpm: %.6f Sv/h), cal3=(%u cpm: %.6f Sv/h)\n",
-           device_cfg.cal1_cpm, device_cfg.cal1_sv, device_cfg.cal2_cpm, device_cfg.cal2_sv, device_cfg.cal3_cpm,
-           device_cfg.cal3_sv);
+           device_conf.cal1_cpm, device_conf.cal1_sv, device_conf.cal2_cpm, device_conf.cal2_sv, device_conf.cal3_cpm,
+           device_conf.cal3_sv);
     return true;
 }
 
@@ -540,7 +395,7 @@ typedef struct {
     size_t count;
 } calibration_data_t;
 
-void set_usvh_calibration(calibration_data_t *calib_data, const device_cfg_t *cfg) {
+void set_usvh_calibration(calibration_data_t *calib_data, const device_conf_t *cfg) {
     if (calib_data->points != NULL) {
         free(calib_data->points);
         calib_data->points = NULL;
@@ -583,10 +438,10 @@ float get_usvh_calibrated(const calibration_data_t *calib_data, const int cpm) {
     return usvh;
 }
 
-void calibration_begin(calibration_data_t *calib_data, const device_cfg_t *device_cfg) {
+void calibration_begin(calibration_data_t *calib_data, const device_conf_t *device_conf) {
     calib_data->points = NULL;
     calib_data->count = 0;
-    set_usvh_calibration(calib_data, device_cfg);
+    set_usvh_calibration(calib_data, device_conf);
 }
 
 void calibration_end(calibration_data_t *calib_data) {
@@ -671,34 +526,34 @@ void cpm_publish_mqtt(const readings_t *readings, const char *mqtt_topic) {
     mqtt_send(mqtt_topic, json_payload, strlen(json_payload));
 }
 
-bool __publish_gmcmap(const char *user, const char *device, const int cpm, const double acpm, const double usvh) {
-    char url[256], buf[BUF_SIZE];
-    sprintf(url, "/log2.asp?AID=%s&GID=%s&CPM=%d&ACPM=%.2f&uSV=%.2f", user, device, cpm, acpm, usvh);
-    return http_get("www.gmcmap.com", "80", url, buf, sizeof(buf)) && strstr(buf, "OK.") != NULL;
-}
 void cpm_publish_gmcmap(const readings_t *readings, const char *gmcmap_user_id, const char *gmcmap_counter_id) {
     static time_t last_publish_time = 0;
     if (intervalable(GMCMAP_PUBLISH_PERIOD, &last_publish_time))
-        if (!__publish_gmcmap(gmcmap_user_id, gmcmap_counter_id, readings->cpm, readings->acpm, readings->usvh))
+        if (!gmcmap_send(gmcmap_user_id, gmcmap_counter_id, readings->cpm, readings->acpm, readings->usvh))
             printf("WARNING: publish to gmcmap failed\n");
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-void process_fault(const char *type) {
+void process_fault(volatile bool *running, const char *type) {
     printf("reader: fault: %s\n", type);
     printf("reader: device reconnect\n");
     serial_disconnect();
-    if (serial_connect_wait(&running)) {
+    if (serial_connect_wait(running)) {
         device_info_display();
         printf("reader: device reconnected\n");
     }
 }
 
+void process_sleep(volatile bool *running) {
+    for (int second = 0; second < config_read_period && *running; second++)
+        sleep(1);
+}
+
 #define PROCESS_READINGS_SAMPLE_PERIOD 60 * 60
 
-void process_readings(void) {
+void process_readings(volatile bool *running) {
 
     const bool publish_mqtt = (strlen(config_mqtt_topic) > 0),
                publish_gmcmap = (strlen(config_gmcmap_user_id) > 0 && strlen(config_gmcmap_counter_id) > 0);
@@ -712,16 +567,16 @@ void process_readings(void) {
     printf("\n");
 
     calibration_data_t calib_data;
-    calibration_begin(&calib_data, &device_cfg);
+    calibration_begin(&calib_data, &device_conf);
     readings_begin(PROCESS_READINGS_SAMPLE_PERIOD, (PROCESS_READINGS_SAMPLE_PERIOD / config_read_period) * 1.25);
     int cpm = 0;
-    while (running) {
+    while (*running) {
         if (!serial_check() || !serial_connected())
-            process_fault("device disconnected");
+            process_fault(running, "device disconnected");
         else if (!device_getcpm_request())
-            process_fault("device write error");
+            process_fault(running, "device write error");
         else if (!device_getcpm_read(&cpm) || !cpm_is_reasonable(cpm))
-            process_fault("short or faulty data, device probably disconnected");
+            process_fault(running, "short or faulty data, device probably disconnected");
         else {
             const readings_t readings = readings_update(cpm, &calib_data);
             cpm_display(&readings);
@@ -729,7 +584,7 @@ void process_readings(void) {
                 cpm_publish_mqtt(&readings, config_mqtt_topic);
             if (publish_gmcmap)
                 cpm_publish_gmcmap(&readings, config_gmcmap_user_id, config_gmcmap_counter_id);
-            sleep(config_read_period);
+            process_sleep(running);
         }
     }
     readings_end();
@@ -739,16 +594,13 @@ void process_readings(void) {
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-void cleanup(void) {
-    running = false;
-    serial_disconnect();
-    mqtt_end();
-}
+volatile bool running = true;
 
 void signal_handler(int sig __attribute__((unused))) {
-    printf("gqgmctomqtt: terminating\n");
-    cleanup();
-    exit(EXIT_SUCCESS);
+    if (running) {
+        printf("gqgmctomqtt: stopping\n");
+        running = false;
+    }
 }
 
 int main(int argc, const char **argv) {
@@ -760,21 +612,26 @@ int main(int argc, const char **argv) {
         fprintf(stderr, "gqgmctomqtt: failed to load config\n");
         return EXIT_FAILURE;
     }
-    if (!serial_connect_wait(&running)) {
-        fprintf(stderr, "gqgmctomqtt: failed to connect serial\n");
+    const serial_config_t serial_config = {
+        .port = config_serial_port,
+        .rate = config_serial_rate,
+        .bits = SERIAL_8N1,
+    };
+    if (!serial_begin(&serial_config) || !serial_connect_wait(&running)) {
+        fprintf(stderr, "gqgmctomqtt: failed to begin/connect serial\n");
+        serial_end();
         return EXIT_FAILURE;
     }
     if (!mqtt_begin(config_mqtt_server, "sensor-radiation")) {
         fprintf(stderr, "gqgmctomqtt: failed to begin mqtt\n");
-        serial_disconnect();
+        serial_end();
         return EXIT_FAILURE;
     }
-
     device_info_display();
-    device_cfg_process_and_display();
-    process_readings();
-
-    cleanup();
+    device_conf_load_and_display();
+    process_readings(&running);
+    mqtt_end();
+    serial_end();
     return EXIT_SUCCESS;
 }
 

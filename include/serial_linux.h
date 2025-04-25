@@ -14,6 +14,9 @@
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
+#define SERIAL_CONNECT_CHECK_PERIOD 5
+#define SERIAL_CONNECT_CHECK_PRINT 30
+
 typedef enum {
     SERIAL_8N1 = 0,
 } serial_bits_t;
@@ -36,13 +39,17 @@ typedef struct {
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
+serial_config_t serial_config;
+
 int serial_fd = -1;
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-bool serial_connect(const serial_config_t *config) {
-    serial_fd = open(config->port, O_RDWR | O_NOCTTY);
+bool serial_check(void) { return (access(serial_config.port, F_OK) == 0); }
+
+bool serial_connect(void) {
+    serial_fd = open(serial_config.port, O_RDWR | O_NOCTTY);
     if (serial_fd < 0) {
         PRINTF_ERROR("serial: error opening port: %s\n", strerror(errno));
         return false;
@@ -56,7 +63,7 @@ bool serial_connect(const serial_config_t *config) {
         return false;
     }
     speed_t baud;
-    switch (config->rate) {
+    switch (serial_config.rate) {
     case 1200:
         baud = B1200;
         break;
@@ -82,15 +89,15 @@ bool serial_connect(const serial_config_t *config) {
         baud = B115200;
         break;
     default:
-        PRINTF_ERROR("serial: unsupported baud rate: %d\n", config->rate);
+        PRINTF_ERROR("serial: unsupported baud rate: %d\n", serial_config.rate);
         close(serial_fd);
         serial_fd = -1;
         return false;
     }
     cfsetispeed(&tty, baud);
     cfsetospeed(&tty, baud);
-    if (config->bits != SERIAL_8N1) {
-        PRINTF_ERROR("serial: unsupported bits: %s\n", serial_bits_str(config->bits));
+    if (serial_config.bits != SERIAL_8N1) {
+        PRINTF_ERROR("serial: unsupported bits: %s\n", serial_bits_str(serial_config.bits));
         close(serial_fd);
         serial_fd = -1;
         return false;
@@ -124,6 +131,24 @@ void serial_disconnect(void) {
     serial_fd = -1;
 }
 
+bool serial_connected(void) { return serial_fd >= 0; }
+
+bool serial_connect_wait(volatile bool *running) {
+    int counter = 0;
+    while (*running) {
+        if (serial_check()) {
+            if (!serial_connect())
+                return false;
+            PRINTF_INFO("serial: connected\n");
+            return true;
+        }
+        if (counter++ % (SERIAL_CONNECT_CHECK_PRINT / SERIAL_CONNECT_CHECK_PERIOD) == 0)
+            PRINTF_INFO("serial: connection pending\n");
+        sleep(SERIAL_CONNECT_CHECK_PERIOD);
+    }
+    return false;
+}
+
 void serial_flush(void) {
     if (serial_fd < 0)
         return;
@@ -136,6 +161,8 @@ int serial_write(const unsigned char *buffer, const int length) {
     usleep(50 * 1000); // yuck
     return (int)write(serial_fd, buffer, length);
 }
+
+bool serial_write_all(const unsigned char *buffer, const int length) { return serial_write(buffer, length) == length; }
 
 int serial_read(unsigned char *buffer, const int length, const int timeout_ms) {
     if (serial_fd < 0)
@@ -172,6 +199,13 @@ int serial_read(unsigned char *buffer, const int length, const int timeout_ms) {
     }
     return bytes_read;
 }
+
+bool serial_begin(const serial_config_t *config) {
+    memcpy((void *)&serial_config, config, sizeof(serial_config_t));
+    return true;
+}
+
+void serial_end(void) { serial_disconnect(); }
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
