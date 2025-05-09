@@ -2,10 +2,12 @@
 Description=GQ Electronics GMC to MQTT Service
 Wants=network-online.target
 After=network-online.target
+After=dev-gqgmc500plus.device
+Requires=dev-gqgmc500plus.device
 
 [Service]
 Type=simple
-ExecStart=/opt/sensors/radiation/gqgmctomqtt --config /opt/sensors/radiation/gqgmctomqtt.cfg
+ExecStart=/opt/gqgmctomqtt/gqgmctomqtt --config /opt/gqgmctomqtt/gqgmctomqtt.cfg
 TimeoutStopSec=15s
 KillMode=mixed
 Restart=on-failure
