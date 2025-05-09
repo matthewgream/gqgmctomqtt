@@ -10,5 +10,4 @@ Currently implemented for a GQ Electronics GMC-500+ over serial USB (defaults to
 The communication specification from GC Electronics is at https://www.gqelectronicsllc.com/download/GQ-RFC1801.txt
 (to support GQ-RFC1201.txt based devices, a couple of modifications are needed as stated in the .c source)
 Note the hearbeat mode is not used as it reports CPS that needs translation to CPM.
-Implemented in JavaScript (for NodeJS) and C. AI assisted development.
-Also provided a systemctl file.
+Also provided a systemd service file and an example config file.
