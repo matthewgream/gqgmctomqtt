@@ -5,7 +5,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/opt/sensors/radiation/gqgmctomqtt /opt/sensors/radiation/gqgmctomqtt.cfg
+ExecStart=/opt/sensors/radiation/gqgmctomqtt --config /opt/sensors/radiation/gqgmctomqtt.cfg
 TimeoutStopSec=15s
 KillMode=mixed
 Restart=on-failure

@@ -29,12 +29,12 @@ define install_systemd_service
 	systemctl enable $(1)
 	systemctl start $(1) || echo "Warning: Failed to start $(1)"
 endef
-install_target: $(TARGET).service
+install_service: $(TARGET).service
 	$(call install_systemd_service,$(TARGET),$(TARGET))
 install_udev:
 	cp 90-*.rules /etc/udev/rules.d
 	udevadm control --reload-rules
 	udevadm trigger
-install: install_udev install_target
-.PHONY: install install_target
+install: install_udev install_service
+.PHONY: install install_udev install_service
 
