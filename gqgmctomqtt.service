@@ -1,5 +1,5 @@
 [Unit]
-Description=GC GMC to MQTT server
+Description=GQ Electronics GMC to MQTT Service
 Wants=network-online.target
 After=network-online.target
 
