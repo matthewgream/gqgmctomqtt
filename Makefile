@@ -2,12 +2,12 @@
 CC = gcc
 CFLAGS = -O6 -Wall -Wextra -Wpedantic
 LDFLAGS = -lmosquitto
+SOURCES=include/http_linux.h include/mqtt_linux.h include/serial_linux.h include/util_linux.h include/config_linux.h
 TARGET = gqgmctomqtt
 HOSTNAME = $(shell hostname)
-
 ##
 
-$(TARGET): $(TARGET).c
+$(TARGET): $(TARGET).c $(SOURCES)
 	$(CC) $(CFLAGS) -o $(TARGET) $(TARGET).c $(LDFLAGS)
 all: $(TARGET)
 clean:

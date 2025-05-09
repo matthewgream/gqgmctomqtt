@@ -6,11 +6,10 @@ After=network-online.target
 [Service]
 Type=simple
 ExecStart=/opt/sensors/radiation/gqgmctomqtt /opt/sensors/radiation/gqgmctomqtt.cfg
-ExecReload=kill -HUP $MAINPID
-KillMode=process
+TimeoutStopSec=15s
+KillMode=mixed
 Restart=on-failure
 RestartSec=5s
 
 [Install]
 WantedBy=multi-user.target
-

@@ -12,17 +12,6 @@
  * rather than a string, and the GETCPM command needs modification to read 2 bytes rather than 4 bytes.
  *
  * Tested on a 'GMC-500+/Re 2.5' on debian 6.1.
- *
- * Configuration file 'gqgmctomqtt.cfg' (or otherwise as provided as the first argument to the executable) looks like:
- *
- * SERIAL_PORT=/dev/ttyUSB0
- * SERIAL_RATE=115200
- * READ_PERIOD=5
- * MQTT_SERVER=mqtt://localhost
- * MQTT_TOPIC=sensors/radiation
- * GMCMAP_USER_ID=12345
- * GMCMAP_COUNTER_ID=12345678901
- *
  */
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
@@ -47,9 +36,14 @@
 
 #define SERIAL_PORT_DEFAULT "/dev/ttyUSB0"
 #define SERIAL_RATE_DEFAULT 115200
+#define SERIAL_BITS_DEFAULT SERIAL_8N1
+
 #define READ_PERIOD_DEFAULT 30
+
 #define MQTT_SERVER_DEFAULT "mqtt://localhost"
+#define MQTT_CLIENT_DEFAULT "sensor-radiation"
 #define MQTT_TOPIC_DEFAULT "sensors/radiation"
+
 #define GMCMAP_USER_ID_DEFAULT ""
 #define GMCMAP_COUNTER_ID_DEFAULT ""
 
@@ -103,63 +97,54 @@ bool gmcmap_send(const char *user, const char *device, const int cpm, const doub
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-#define CONFIG_MAX_LINE 256
-#define CONFIG_MAX_VALUE 128
+#include "include/config_linux.h"
 
-const char *config_file = CONFIG_FILE_DEFAULT;
-char config_mqtt_server[CONFIG_MAX_VALUE] = MQTT_SERVER_DEFAULT;
-char config_mqtt_topic[CONFIG_MAX_VALUE] = MQTT_TOPIC_DEFAULT;
-char config_gmcmap_user_id[CONFIG_MAX_VALUE] = GMCMAP_USER_ID_DEFAULT;
-char config_gmcmap_counter_id[CONFIG_MAX_VALUE] = GMCMAP_COUNTER_ID_DEFAULT;
-char config_serial_port[CONFIG_MAX_VALUE] = SERIAL_PORT_DEFAULT;
-int config_serial_rate = SERIAL_RATE_DEFAULT;
-int config_read_period = READ_PERIOD_DEFAULT;
+// clang-format off
+const struct option config_options [] = {
+    {"config",                required_argument, 0, 0},
+    {"port",                  required_argument, 0, 0},
+    {"rate",                  required_argument, 0, 0},
+    {"bits",                  required_argument, 0, 0},
+    {"read-period",           required_argument, 0, 0},
+    {"mqtt-server",           required_argument, 0, 0},
+    {"mqtt-client",           required_argument, 0, 0},
+    {"mqtt-topic",            required_argument, 0, 0},
+    {"gmcmap-user-id",        required_argument, 0, 0},
+    {"gmcmap-counter-id",     required_argument, 0, 0},
+    {0, 0, 0, 0}
+};
+// clang-format on
 
-bool config_load(const int argc, const char **argv) {
-    if (argc > 1)
-        config_file = argv[1];
-    FILE *file = fopen(config_file, "r");
-    if (file == NULL) {
-        fprintf(stderr, "config: could not load '%s', using defaults (which may not work correctly)\n", config_file);
+void config_populate_serial(serial_config_t *config) {
+    config->port = config_get_string("port", SERIAL_PORT_DEFAULT);
+    config->rate = config_get_integer("rate", SERIAL_RATE_DEFAULT);
+    config->bits = config_get_bits("bits", SERIAL_BITS_DEFAULT);
+
+    printf("config: serial: port=%s, rate=%d, bits=%s\n", config->port, config->rate, serial_bits_str(config->bits));
+}
+
+serial_config_t serial_config;
+int read_period;
+MqttConfig mqtt_config;
+const char *mqtt_topic;
+const char *gmcmap_user_id, *gmcmap_counter_id;
+
+bool config(const int argc, const char *argv[]) {
+
+    if (!config_load(CONFIG_FILE_DEFAULT, argc, argv, config_options))
         return false;
-    }
-    char line[CONFIG_MAX_LINE];
-    while (fgets(line, sizeof(line), file)) {
-        char *equals = strchr(line, '=');
-        if (equals) {
-            *equals = '\0';
-            char *key = line;
-            char *value = equals + 1;
-            while (*key && isspace(*key))
-                key++;
-            char *end = key + strlen(key) - 1;
-            while (end > key && isspace(*end))
-                *end-- = '\0';
-            while (*value && isspace(*value))
-                value++;
-            end = value + strlen(value) - 1;
-            while (end > value && isspace(*end))
-                *end-- = '\0';
-            if (strcmp(key, "SERIAL_PORT") == 0)
-                strncpy(config_serial_port, value, sizeof(config_serial_port) - 1);
-            else if (strcmp(key, "SERIAL_RATE") == 0)
-                config_serial_rate = atoi(value);
-            else if (strcmp(key, "READ_PERIOD") == 0)
-                config_read_period = atoi(value);
-            else if (strcmp(key, "MQTT_SERVER") == 0)
-                strncpy(config_mqtt_server, value, sizeof(config_mqtt_server) - 1);
-            else if (strcmp(key, "MQTT_TOPIC") == 0)
-                strncpy(config_mqtt_topic, value, sizeof(config_mqtt_topic) - 1);
-            else if (strcmp(key, "GMCMAP_USER_ID") == 0)
-                strncpy(config_gmcmap_user_id, value, sizeof(config_gmcmap_user_id) - 1);
-            else if (strcmp(key, "GMCMAP_COUNTER_ID") == 0)
-                strncpy(config_gmcmap_counter_id, value, sizeof(config_gmcmap_counter_id) - 1);
-        }
-    }
-    fclose(file);
-    printf("config: '%s': serial=%s+%d, period=%d, mqtt=%s+%s, gmcmap=%s+%s\n", config_file, config_serial_port,
-           config_serial_rate, config_read_period, config_mqtt_server, config_mqtt_topic, config_gmcmap_user_id,
-           config_gmcmap_counter_id);
+
+    config_populate_serial(&serial_config);
+
+    read_period = config_get_integer("read-period", READ_PERIOD_DEFAULT);
+
+    mqtt_config.server = config_get_string("mqtt-server", MQTT_SERVER_DEFAULT);
+    mqtt_config.client = config_get_string("mqtt-client", MQTT_CLIENT_DEFAULT);
+    mqtt_topic = config_get_string("mqtt-topic", MQTT_TOPIC_DEFAULT);
+
+    gmcmap_user_id = config_get_string("gmcmap-user-id", GMCMAP_USER_ID_DEFAULT);
+    gmcmap_counter_id = config_get_string("gmcmap-counter-id", GMCMAP_COUNTER_ID_DEFAULT);
+
     return true;
 }
 
@@ -272,6 +257,9 @@ bool device_setdatetime(const unsigned char year, const unsigned char month, con
                         const unsigned char hour, const unsigned char minute, const unsigned char second) {
     char command[sizeof("<SETDATETIMEymdhms>>")] = "<SETDATETIMEymdhms>>";
     unsigned char *datetime = (unsigned char *)strchr(command, 'y');
+    if ((year < 25 || year > 75) || (month == 0 || month > 12) || (day == 0 || day > 31) || (hour > 23) ||
+        (minute > 59) || (second > 59))
+        return false;
     *datetime++ = year;
     *datetime++ = month;
     *datetime++ = day;
@@ -547,7 +535,7 @@ void process_fault(volatile bool *running, const char *type) {
 }
 
 void process_sleep(volatile bool *running) {
-    for (int second = 0; second < config_read_period && *running; second++)
+    for (int second = 0; second < read_period && *running; second++)
         sleep(1);
 }
 
@@ -555,20 +543,19 @@ void process_sleep(volatile bool *running) {
 
 void process_readings(volatile bool *running) {
 
-    const bool publish_mqtt = (strlen(config_mqtt_topic) > 0),
-               publish_gmcmap = (strlen(config_gmcmap_user_id) > 0 && strlen(config_gmcmap_counter_id) > 0);
+    const bool publish_mqtt = (strlen(mqtt_topic) > 0),
+               publish_gmcmap = (strlen(gmcmap_user_id) > 0 && strlen(gmcmap_counter_id) > 0);
 
-    printf("reader: reading CPM every %d seconds", config_read_period);
+    printf("reader: reading CPM every %d seconds", read_period);
     if (publish_mqtt)
-        printf(", publishing to MQTT:'%s'", config_mqtt_topic);
+        printf(", publishing to MQTT:'%s'", mqtt_topic);
     if (publish_gmcmap)
-        printf("%s GMCMAP:'%s/%s'", publish_mqtt ? "," : ", publishig to", config_gmcmap_user_id,
-               config_gmcmap_counter_id);
+        printf("%s GMCMAP:'%s/%s'", publish_mqtt ? "," : ", publishing to", gmcmap_user_id, gmcmap_counter_id);
     printf("\n");
 
     calibration_data_t calib_data;
     calibration_begin(&calib_data, &device_conf);
-    readings_begin(PROCESS_READINGS_SAMPLE_PERIOD, (PROCESS_READINGS_SAMPLE_PERIOD / config_read_period) * 1.25);
+    readings_begin(PROCESS_READINGS_SAMPLE_PERIOD, (PROCESS_READINGS_SAMPLE_PERIOD / read_period) * 1.25);
     int cpm = 0;
     while (*running) {
         if (!serial_check() || !serial_connected())
@@ -581,9 +568,9 @@ void process_readings(volatile bool *running) {
             const readings_t readings = readings_update(cpm, &calib_data);
             cpm_display(&readings);
             if (publish_mqtt)
-                cpm_publish_mqtt(&readings, config_mqtt_topic);
+                cpm_publish_mqtt(&readings, mqtt_topic);
             if (publish_gmcmap)
-                cpm_publish_gmcmap(&readings, config_gmcmap_user_id, config_gmcmap_counter_id);
+                cpm_publish_gmcmap(&readings, gmcmap_user_id, gmcmap_counter_id);
             process_sleep(running);
         }
     }
@@ -598,32 +585,27 @@ volatile bool running = true;
 
 void signal_handler(int sig __attribute__((unused))) {
     if (running) {
-        printf("gqgmctomqtt: stopping\n");
+        printf("stopping\n");
         running = false;
     }
 }
 
 int main(int argc, const char **argv) {
     setbuf(stdout, NULL);
-    printf("gqgmctomqtt: starting\n");
+    printf("starting\n");
     signal(SIGINT, signal_handler);
     signal(SIGTERM, signal_handler);
-    if (!config_load(argc, argv)) {
-        fprintf(stderr, "gqgmctomqtt: failed to load config\n");
+    if (!config(argc, argv)) {
+        fprintf(stderr, "failed to load config\n");
         return EXIT_FAILURE;
     }
-    const serial_config_t serial_config = {
-        .port = config_serial_port,
-        .rate = config_serial_rate,
-        .bits = SERIAL_8N1,
-    };
     if (!serial_begin(&serial_config) || !serial_connect_wait(&running)) {
-        fprintf(stderr, "gqgmctomqtt: failed to begin/connect serial\n");
+        fprintf(stderr, "failed to begin/connect serial\n");
         serial_end();
         return EXIT_FAILURE;
     }
-    if (!mqtt_begin(config_mqtt_server, "sensor-radiation")) {
-        fprintf(stderr, "gqgmctomqtt: failed to begin mqtt\n");
+    if (!mqtt_begin(&mqtt_config)) {
+        fprintf(stderr, "failed to begin mqtt\n");
         serial_end();
         return EXIT_FAILURE;
     }

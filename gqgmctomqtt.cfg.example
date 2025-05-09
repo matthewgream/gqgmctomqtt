@@ -9,6 +9,6 @@ mqtt-server=mqtt://localhost
 mqtt-client=sensor-radiation
 mqtt-topic=sensors/radiation
 
-gmcmap-user-id=08501
-gmcmap-counter-id=32857494580
+gmcmap-user-id=12345
+gmcmap-counter-id=12345678901
 
