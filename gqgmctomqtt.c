@@ -41,7 +41,7 @@
 #define READ_PERIOD_DEFAULT 30
 
 #define MQTT_SERVER_DEFAULT "mqtt://localhost"
-#define MQTT_CLIENT_DEFAULT "sensor-radiation"
+#define MQTT_CLIENT_DEFAULT "gqgmctomqtt"
 #define MQTT_TOPIC_DEFAULT "sensors/radiation"
 
 #define GMCMAP_USER_ID_DEFAULT ""

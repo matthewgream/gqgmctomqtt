@@ -137,7 +137,13 @@ bool config_load(const char *config_file, const int argc, const char *argv[], co
             if (strcmp(options_long[option_index].name, "config") != 0)
                 __config_set_value(options_long[option_index].name, optarg);
     }
-    printf("config: loaded from '%s' and command line\n", config_file);
+    printf("config: file='%s'", config_file);
+    for (int i = 1; options_long[i].name != NULL; i++) {
+        const char *value = config_get_string(options_long[i].name, NULL);
+        if (value != NULL)
+            printf(", %s='%s'", options_long[i].name, value);
+    }
+    printf("\n");
     return true;
 }
 

@@ -1,14 +1,9 @@
-
 serial-port=/dev/gqgmc500plus
 serial-rate=115200
 serial-bits=8N1
-
 read-period=30
-
 mqtt-server=mqtt://localhost
-mqtt-client=sensor-radiation
+mqtt-client=gqgmctomqtt
 mqtt-topic=sensors/radiation
-
 gmcmap-user-id=12345
 gmcmap-counter-id=12345678901
-
