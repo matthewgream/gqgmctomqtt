@@ -23,7 +23,7 @@ bool http_get(const char *host, const char *port, const char *url, char *respons
                 sprintf(request, "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", url, host);
                 if (send(sock, request, strlen(request), 0) > 0) {
                     ssize_t n;
-                    if ((n = recv(sock, response, response_size - 1, 0)) >= 0) {
+                    if ((n = recv(sock, response, (size_t)response_size - 1, 0)) >= 0) {
                         response[n] = '\0';
                         result = true;
                     }

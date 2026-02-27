@@ -3,11 +3,13 @@ Description=GQ Electronics GMC to MQTT Service
 Wants=network-online.target
 After=network-online.target
 After=dev-gqgmc500plus.device
+After=mosquitto.service
 Requires=dev-gqgmc500plus.device
+Requires=mosquitto.service
 
 [Service]
 Type=simple
-ExecStart=/opt/gqgmctomqtt/gqgmctomqtt --config /opt/gqgmctomqtt/gqgmctomqtt.cfg
+ExecStart=/usr/local/bin/gqgmctomqtt --config /etc/default/gqgmctomqtt
 TimeoutStopSec=15s
 KillMode=mixed
 Restart=on-failure

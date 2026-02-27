@@ -129,7 +129,7 @@ MqttConfig mqtt_config;
 const char *mqtt_topic;
 const char *gmcmap_user_id, *gmcmap_counter_id;
 
-bool config(const int argc, const char *argv[]) {
+bool config(int argc, char *argv[]) {
 
     if (!config_load(CONFIG_FILE_DEFAULT, argc, argv, config_options))
         return false;
@@ -335,7 +335,9 @@ bool device_time_check(const char *datetime) {
 bool device_time_write(void) {
     const time_t now = time(NULL);
     const struct tm *tm = localtime(&now);
-    if (!device_setdatetime(tm->tm_year - 100, tm->tm_mon + 1, tm->tm_mday, tm->tm_hour, tm->tm_min, tm->tm_sec)) {
+    if (!device_setdatetime((unsigned char)(tm->tm_year - 100), (unsigned char)(tm->tm_mon + 1),
+                            (unsigned char)(tm->tm_mday), (unsigned char)(tm->tm_hour), (unsigned char)(tm->tm_min),
+                            (unsigned char)(tm->tm_sec))) {
         printf("WARNING: Device time could not be written\n");
         return false;
     }
@@ -400,8 +402,8 @@ void set_usvh_calibration(calibration_data_t *calib_data, const device_conf_t *c
             const int cpm_s = temp_points[i].cpm, cpm_e = temp_points[i + 1].cpm;
             const float usv_s = temp_points[i].usv, usv_e = temp_points[i + 1].usv;
             if (cpm_e > cpm_s) {
-                const float m = (usv_e - usv_s) / ((float)(cpm_e - cpm_s));
-                const float b = -(m * cpm_e) + usv_e;
+                const float m = (usv_e - usv_s) / (float)(cpm_e - cpm_s);
+                const float b = -(m * (float)cpm_e) + usv_e;
                 calib_data->points[calib_data->count].cpm_max = cpm_e;
                 calib_data->points[calib_data->count].slope = m;
                 calib_data->points[calib_data->count].intercept = b;
@@ -416,20 +418,20 @@ float get_usvh_calibrated(const calibration_data_t *calib_data, const int cpm) {
     if (calib_data->count > 0 && calib_data->points != NULL) {
         for (size_t i = 0; i < calib_data->count; i++)
             if (cpm <= calib_data->points[i].cpm_max) {
-                usvh = cpm * calib_data->points[i].slope + calib_data->points[i].intercept;
+                usvh = (float)cpm * calib_data->points[i].slope + calib_data->points[i].intercept;
                 break;
             }
         if (usvh < 0 && calib_data->count > 0)
-            usvh = cpm * calib_data->points[calib_data->count - 1].slope +
+            usvh = (float)cpm * calib_data->points[calib_data->count - 1].slope +
                    calib_data->points[calib_data->count - 1].intercept;
     }
     return usvh;
 }
 
-void calibration_begin(calibration_data_t *calib_data, const device_conf_t *device_conf) {
+void calibration_begin(calibration_data_t *calib_data, const device_conf_t *cfg) {
     calib_data->points = NULL;
     calib_data->count = 0;
-    set_usvh_calibration(calib_data, device_conf);
+    set_usvh_calibration(calib_data, cfg);
 }
 
 void calibration_end(calibration_data_t *calib_data) {
@@ -464,7 +466,7 @@ void readings_begin(const int period, const int count) {
     state.sample_period = period;
     state.sample_count = count;
     state.history_index = state.history_count = 0;
-    state.history_store = (sample_t *)malloc(sizeof(sample_t) * count);
+    state.history_store = (sample_t *)malloc(sizeof(sample_t) * (size_t)count);
     state.last_update_time = time(NULL);
     printf("sample: period=%d, count=%d\n", period, count);
 }
@@ -474,8 +476,7 @@ void readings_end(void) { free(state.history_store); }
 readings_t readings_update(const int cpm, const calibration_data_t *calib_data) {
     readings_t r;
     const time_t current_time = time(NULL);
-    const sample_t sample = {.timestamp = current_time, .cpm = cpm};
-    state.history_store[state.history_index] = sample;
+    state.history_store[state.history_index] = (sample_t){.timestamp = current_time, .cpm = cpm};
     state.history_index = (state.history_index + 1) % state.sample_count;
     if (state.history_count < state.sample_count)
         state.history_count++;
@@ -508,16 +509,16 @@ void cpm_display(const readings_t *readings) {
     printf("reader: CPM=%d, ACPM=%.2f, uSv/h=%.2f [%s]\n", readings->cpm, readings->acpm, readings->usvh, timestamp);
 }
 
-void cpm_publish_mqtt(const readings_t *readings, const char *mqtt_topic) {
+void cpm_publish_mqtt(const readings_t *readings, const char *topic) {
     char json_payload[128];
     sprintf(json_payload, "{\"cpm\":%d,\"acpm\":%.2f,\"usvh\":%.2f}", readings->cpm, readings->acpm, readings->usvh);
-    mqtt_send(mqtt_topic, json_payload, strlen(json_payload));
+    mqtt_send(topic, json_payload, (int)strlen(json_payload));
 }
 
-void cpm_publish_gmcmap(const readings_t *readings, const char *gmcmap_user_id, const char *gmcmap_counter_id) {
+void cpm_publish_gmcmap(const readings_t *readings, const char *user_id, const char *counter_id) {
     static time_t last_publish_time = 0;
     if (intervalable(GMCMAP_PUBLISH_PERIOD, &last_publish_time))
-        if (!gmcmap_send(gmcmap_user_id, gmcmap_counter_id, readings->cpm, readings->acpm, readings->usvh))
+        if (!gmcmap_send(user_id, counter_id, readings->cpm, readings->acpm, readings->usvh))
             printf("WARNING: publish to gmcmap failed\n");
 }
 
@@ -555,7 +556,7 @@ void process_readings(volatile bool *running) {
 
     calibration_data_t calib_data;
     calibration_begin(&calib_data, &device_conf);
-    readings_begin(PROCESS_READINGS_SAMPLE_PERIOD, (PROCESS_READINGS_SAMPLE_PERIOD / read_period) * 1.25);
+    readings_begin(PROCESS_READINGS_SAMPLE_PERIOD, ((PROCESS_READINGS_SAMPLE_PERIOD / read_period) * 125) / 100);
     int cpm = 0;
     while (*running) {
         if (!serial_check() || !serial_connected())
@@ -590,7 +591,7 @@ void signal_handler(int sig __attribute__((unused))) {
     }
 }
 
-int main(int argc, const char **argv) {
+int main(int argc, char **argv) {
     setbuf(stdout, NULL);
     printf("starting\n");
     signal(SIGINT, signal_handler);

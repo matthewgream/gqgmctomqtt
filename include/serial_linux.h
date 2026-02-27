@@ -39,17 +39,17 @@ typedef struct {
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-serial_config_t serial_config;
+const serial_config_t *serial_cfg = NULL;
 
 int serial_fd = -1;
 
 // -----------------------------------------------------------------------------------------------------------------------------------------
 // -----------------------------------------------------------------------------------------------------------------------------------------
 
-bool serial_check(void) { return (access(serial_config.port, F_OK) == 0); }
+bool serial_check(void) { return (access(serial_cfg->port, F_OK) == 0); }
 
 bool serial_connect(void) {
-    serial_fd = open(serial_config.port, O_RDWR | O_NOCTTY);
+    serial_fd = open(serial_cfg->port, O_RDWR | O_NOCTTY);
     if (serial_fd < 0) {
         PRINTF_ERROR("serial: error opening port: %s\n", strerror(errno));
         return false;
@@ -63,7 +63,7 @@ bool serial_connect(void) {
         return false;
     }
     speed_t baud;
-    switch (serial_config.rate) {
+    switch (serial_cfg->rate) {
     case 1200:
         baud = B1200;
         break;
@@ -89,29 +89,29 @@ bool serial_connect(void) {
         baud = B115200;
         break;
     default:
-        PRINTF_ERROR("serial: unsupported baud rate: %d\n", serial_config.rate);
+        PRINTF_ERROR("serial: unsupported baud rate: %d\n", serial_cfg->rate);
         close(serial_fd);
         serial_fd = -1;
         return false;
     }
     cfsetispeed(&tty, baud);
     cfsetospeed(&tty, baud);
-    if (serial_config.bits != SERIAL_8N1) {
-        PRINTF_ERROR("serial: unsupported bits: %s\n", serial_bits_str(serial_config.bits));
+    if (serial_cfg->bits != SERIAL_8N1) {
+        PRINTF_ERROR("serial: unsupported bits: %s\n", serial_bits_str(serial_cfg->bits));
         close(serial_fd);
         serial_fd = -1;
         return false;
     }
-    tty.c_cflag |= (CLOCAL | CREAD);
-    tty.c_cflag &= ~CSIZE;
-    tty.c_cflag |= CS8;      // 8-bit characters
-    tty.c_cflag &= ~PARENB;  // No parity
-    tty.c_cflag &= ~CSTOPB;  // 1 stop bit
-    tty.c_cflag &= ~CRTSCTS; // No hardware flow control
-    tty.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG);
-    tty.c_oflag &= ~OPOST; // Raw output
-    tty.c_iflag &= ~(IXON | IXOFF | IXANY);
-    tty.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL);
+    tty.c_cflag |= (tcflag_t)(CLOCAL | CREAD);
+    tty.c_cflag &= (tcflag_t)~CSIZE;
+    tty.c_cflag |= (tcflag_t)CS8;      // 8-bit characters
+    tty.c_cflag &= (tcflag_t)~PARENB;  // No parity
+    tty.c_cflag &= (tcflag_t)~CSTOPB;  // 1 stop bit
+    tty.c_cflag &= (tcflag_t)~CRTSCTS; // No hardware flow control
+    tty.c_lflag &= (tcflag_t) ~(ICANON | ECHO | ECHOE | ISIG);
+    tty.c_oflag &= (tcflag_t)~OPOST; // Raw output
+    tty.c_iflag &= (tcflag_t) ~(IXON | IXOFF | IXANY);
+    tty.c_iflag &= (tcflag_t) ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL);
     tty.c_cc[VMIN] = 0;
     tty.c_cc[VTIME] = 10;
     if (tcsetattr(serial_fd, TCSANOW, &tty) != 0) {
@@ -159,7 +159,7 @@ int serial_write(const unsigned char *buffer, const int length) {
     if (serial_fd < 0)
         return -1;
     usleep(50 * 1000); // yuck
-    return (int)write(serial_fd, buffer, length);
+    return (int)write(serial_fd, buffer, (size_t)length);
 }
 
 bool serial_write_all(const unsigned char *buffer, const int length) { return serial_write(buffer, length) == length; }
@@ -200,8 +200,8 @@ int serial_read(unsigned char *buffer, const int length, const int timeout_ms) {
     return bytes_read;
 }
 
-bool serial_begin(const serial_config_t *config) {
-    memcpy((void *)&serial_config, config, sizeof(serial_config_t));
+bool serial_begin(const serial_config_t *cfg) {
+    serial_cfg = cfg;
     return true;
 }
 

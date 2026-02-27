@@ -119,7 +119,7 @@ void __config_load_file(const char *filename) {
     fclose(file);
 }
 
-bool config_load(const char *config_file, const int argc, const char *argv[], const struct option *options_long) {
+bool config_load(const char *config_file, int argc, char *argv[], const struct option *options_long) {
     int c;
     int option_index = 0;
     optind = 0;

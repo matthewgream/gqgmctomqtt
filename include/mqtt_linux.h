@@ -42,13 +42,13 @@ bool mqtt_parse(const char *string, char *host, const int length, int *port, boo
     *port = 1883;
     *ssl = false;
     if (strncmp(string, "mqtt://", 7) == 0) {
-        strncpy(host, string + 7, length - 1);
+        strncpy(host, string + 7, (size_t)length - 1);
     } else if (strncmp(string, "mqtts://", 8) == 0) {
-        strncpy(host, string + 8, length - 1);
+        strncpy(host, string + 8, (size_t)length - 1);
         *ssl = true;
         *port = 8883;
     } else {
-        strcpy(host, string);
+        strncpy(host, string, (size_t)length);
     }
     char *port_str = strchr(host, ':');
     if (port_str) {
