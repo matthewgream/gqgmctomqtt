@@ -67,7 +67,7 @@ install_udev:
 install: install_target install_default install_udev install_service
 restart:
 	systemctl restart $(INSTALL)
-.PHONY: install install_target install_default  install_udevinstall_service
+.PHONY: install install_target install_default install_udev install_service
 .PHONY: restart
 
 ##
