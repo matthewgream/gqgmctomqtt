@@ -367,8 +367,8 @@ bool device_conf_load_and_display(void) {
     if (!device_getcfg(&device_conf))
         return false;
     printf("device: config: cal1=(%u cpm: %.6f Sv/h), cal2=(%u cpm: %.6f Sv/h), cal3=(%u cpm: %.6f Sv/h)\n",
-           device_conf.cal1_cpm, device_conf.cal1_sv, device_conf.cal2_cpm, device_conf.cal2_sv, device_conf.cal3_cpm,
-           device_conf.cal3_sv);
+           device_conf.cal1_cpm, (double)device_conf.cal1_sv, device_conf.cal2_cpm, (double)device_conf.cal2_sv,
+           device_conf.cal3_cpm, (double)device_conf.cal3_sv);
     return true;
 }
 
