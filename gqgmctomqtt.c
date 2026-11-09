@@ -164,7 +164,7 @@ bool device_getmodel(char *model, const int length) {
     if (length < DEVICE_GETMODEL_SIZE)
         return false;
     for (int i = 0; i < DEVICE_GETMODEL_SIZE - 1; i++)
-        model[i] = isprint(buffer[i]) ? buffer[i] : '.';
+        model[i] = isprint(buffer[i]) ? (char)buffer[i] : '.';
     model[DEVICE_GETMODEL_SIZE - 1] = '\0';
     return true;
 }
