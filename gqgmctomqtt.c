@@ -102,9 +102,9 @@ bool gmcmap_send(const char *user, const char *device, const int cpm, const doub
 // clang-format off
 const struct option config_options [] = {
     {"config",                required_argument, 0, 0},
-    {"port",                  required_argument, 0, 0},
-    {"rate",                  required_argument, 0, 0},
-    {"bits",                  required_argument, 0, 0},
+    {"serial-port",           required_argument, 0, 0},
+    {"serial-rate",           required_argument, 0, 0},
+    {"serial-bits",           required_argument, 0, 0},
     {"read-period",           required_argument, 0, 0},
     {"mqtt-server",           required_argument, 0, 0},
     {"mqtt-client",           required_argument, 0, 0},
@@ -116,9 +116,9 @@ const struct option config_options [] = {
 // clang-format on
 
 void config_populate_serial(serial_config_t *config) {
-    config->port = config_get_string("port", SERIAL_PORT_DEFAULT);
-    config->rate = config_get_integer("rate", SERIAL_RATE_DEFAULT);
-    config->bits = config_get_bits("bits", SERIAL_BITS_DEFAULT);
+    config->port = config_get_string("serial-port", SERIAL_PORT_DEFAULT);
+    config->rate = config_get_integer("serial-rate", SERIAL_RATE_DEFAULT);
+    config->bits = config_get_bits("serial-bits", SERIAL_BITS_DEFAULT);
 
     printf("config: serial: port=%s, rate=%d, bits=%s\n", config->port, config->rate, serial_bits_str(config->bits));
 }
