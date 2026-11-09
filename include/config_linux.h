@@ -80,12 +80,9 @@ serial_bits_t config_get_bits(const char *key, const serial_bits_t default_value
 }
 
 bool is_empty_or_comment(const char *line) {
-    if (*line == '\0')
-        return true;
-    while ((*line == ' ' || *line == '\t') && *line != '\0')
-        if (*line++ == '#')
-            return true;
-    return false;
+    while (isspace((unsigned char)*line))
+        line++;
+    return *line == '\0' || *line == '#';
 }
 
 void __config_load_file(const char *filename) {
